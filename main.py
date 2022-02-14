@@ -4,14 +4,16 @@ This program uses the Jira API to calculate the total autonomy availability upti
 
 Uptime is defined as having no more than one Lexus in a non-auto ready state (manual only or grounded) as determined by Jira tickets. This means that any time the GEM goes out of a Monitor status, downtime is accruing. 
 
+100% auto readiness therefore is limited to two cases: where the whole fleet is auto ready, or where only one Lexus is NOT auto ready.
+
 TODO: 
-    - Include WAMS in calculating of downtime. 
-    - Only accrue downtime if # of non-auto ready cars >= 2
     - Identify those tickets which most severely impact auto-readiness.
+    - Exclude non-operating hours from uptime calculations.
+
 """
 
 from jira import JIRA
-from pandas import date_range, to_datetime
+from pandas import date_range, to_datetime, DatetimeIndex
 from numpy import timedelta64
 import config
 
@@ -25,30 +27,49 @@ def totalTime(days):
     return len(days) * 86400
 
 # given the date/time of a vehicle state impact change that took a vehicle out of auto ready and the date/time of when it was taken out, compute and return the time in seconds between the two dates/times
-def nonAutoReadyTimeDelta(noAutoDate, autoDate):
-    return (abs(to_datetime(autoDate) - to_datetime(noAutoDate)) / timedelta64(1,'s'))
+def timeDelta(noAutoDate, autoDate):
 
+    # convert date times to the same pandas date time format, and strip the timezone data from the collected Jira dates
+    checkStart, checkEnd = to_datetime(config.quarterStart), to_datetime(config.quarterEnd)
+    noAutoDate, autoDate = to_datetime(noAutoDate).tz_localize(None), to_datetime(autoDate).tz_localize(None)
+    
+    # if the start of the downtime is less then the interval we are interested in, set downtime to start of interval
+    # this avoids considering downtime outside of the time interval we are interesed in 
+    if noAutoDate < checkStart:
+        noAutoDate = checkStart
+
+    if autoDate > checkEnd:
+        autoDate = checkEnd
+
+    ret = (abs(autoDate - noAutoDate) / timedelta64(1,'s'))
+
+    return ret
+
+# Given a dictionary containing keys (vehicles) and values (0 if auto ready, 1 if not), determine if the site is 100% auto-ready
+def checkAutoReadyStatusDown(fleetDownStatus):
+    if sum(fleetDownStatus.values()) >= 2 or fleetDownStatus[config.WAMs]:
+        return True
+    else:
+        return False
 
 def main():
     jira = createServerInstance()
-    assignee = config.username
-    starteDate = '2022-02-09'
-    endOfQuarter = '2022-04-01'
-    endDate = to_datetime("{0}".format(endOfQuarter)).strftime('%Y-%m-%d')  #'2022-04-01' # is the end of the quarter, can use to_datetime("today").strftime('%Y-%m-%d') to get current day, TODO may need to resolve this to seconds
-    query = 'project IN ("AA") AND updatedDate >= "{0}" AND updatedDate <= "{1}" AND statusCategory in ("New", "In Progress", "Complete") AND type IN ("Fix On Site","Preventative Maintenance","Support Request") ORDER BY created DESC'.format(starteDate, endDate)
-    
+    startDate, endDate = config.quarterStart, config.quarterEnd
+    query = 'project IN ("{0}") AND updatedDate >= "{1}" AND updatedDate <= "{2}" AND statusCategory in ("New", "In Progress", "Complete") AND type IN ("Fix On Site","Preventative Maintenance","Support Request") ORDER BY created DESC'.format(config.site, startDate, endDate)
+    fleetDownStatus = dict((key,False) for key in config.fleet) # for each vehicle (key), False if auto-ready. True otherwise
+
     # main loop
     totalDowntime = 0
     for issue in jira.search_issues(jql_str=query):
 
-        # fetch the history for a particular issue using the issue key (ex. 'AA-598'). The slicing ensures the list is in ascending datetime order
+        # fetch the history for a particular issue using the issue key (ex. 'AA-598'). The slicing ensures the history is in ascending datetime order
         issueHistory = jira.issue(id=issue.id, expand='changelog').changelog.histories[::-1]
 
         # for a given single issue, loop through the history items and compute downtime using vehicle impact field changes
         vehicleDown = False
         initialCondition = True # this is used to account for cases where ticket is initially created in non-auto ready state, since parsing ticket history skips these cases
         initialDate = issue.fields.created
-        siteAutoState = 0 # this is used for calculating a sum of down vehicles. When siteAutoState >= 2, then site is not reaching auto uptime condition
+
         for i, change in enumerate(issueHistory):
             vehicleImpact = issueHistory[i].items[0]
 
@@ -56,11 +77,16 @@ def main():
             if vehicleImpact.field == 'Vehicle State Impact':
 
                 # if ticket was created in non-auto ready state -- vehicle impact only changed to monitor from grounded or manual only
-                if vehicleImpact.toString == 'Monitor' and initialCondition == True and siteAutoState >= 2:
+                if vehicleImpact.toString == 'Monitor' and initialCondition == True:
                     initialCondition = False
-                    downTime = nonAutoReadyTimeDelta(initialDate, change.created)
-                    totalDowntime += downTime
-                    siteAutoState += 1
+                    fleetDownStatus[issue.fields.customfield_10068[0]] = True # that index is the vehicle for issue. Yeah. 
+                    downTime = timeDelta(initialDate, change.created)
+                    print("Issue: {0} Downtime: {1} Date-range: {2} - {3}".format(issue.key, downTime, initialDate, change.created))
+                    
+                    # Lastly, if the site's definition of 100% auto availability is violated, then add downtime
+                    if checkAutoReadyStatusDown(fleetDownStatus):
+                        totalDowntime += downTime
+                        
                     continue
 
                 # catch when cars are made non-auto ready in ticket history
@@ -68,21 +94,24 @@ def main():
                     vehicleDown = True
                     initialCondition = False
                     downDate = change.created
-                    siteAutoState += 1
-                    continue
+                    fleetDownStatus[issue.fields.customfield_10068[0]] = True 
                 
                 # mark the transition from non-auto ready to auto-ready, compute instance downtime and add to total downtime
                 if (vehicleImpact.toString == 'Monitor'):
                     vehicleDown = False
+                    fleetDownStatus[issue.fields.customfield_10068[0]] = False
                     upDate = change.created
-                    downTime = nonAutoReadyTimeDelta(downDate, upDate)
-                    totalDowntime += downTime
-                    continue
+                    downTime = timeDelta(downDate, upDate)
+                    print("Issue: {0} Downtime: {1} Date-range: {2} - {3}".format(issue.key, downTime, downDate, upDate))
 
-        print(issue.key, totalDowntime)
+                    # if site is not 100% auto ready, compute and add downtime
+                    if checkAutoReadyStatusDown(fleetDownStatus):
+                        totalDowntime += downTime
+                        
+                    
 
-    totTime = totalTime(date_range(starteDate,endDate,freq='d'))
-    autoReadinessPercent = ((totTime - totalDowntime) / totTime) * 100
+    totTime = totalTime(date_range(startDate,endDate,freq='d'))
+    autoReadinessPercent = abs((totTime - totalDowntime) / totTime) * 100
     print(autoReadinessPercent, "'%' auto ready")
 
 if __name__ == '__main__':
