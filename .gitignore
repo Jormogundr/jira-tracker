@@ -4,3 +4,4 @@ lib/
 
 # contains sensitive information
 config.py
+pyvenv.cfg

@@ -12,6 +12,7 @@ TODO:
 
 """
 
+from termios import TIOCINQ
 from jira import JIRA
 from pandas import date_range, to_datetime, DatetimeIndex
 from numpy import timedelta64
@@ -30,16 +31,7 @@ def totalTime(days):
 def timeDelta(noAutoDate, autoDate):
 
     # convert date times to the same pandas date time format, and strip the timezone data from the collected Jira dates
-    checkStart, checkEnd = to_datetime(config.quarterStart), to_datetime(config.quarterEnd)
-    noAutoDate, autoDate = to_datetime(noAutoDate).tz_localize(None), to_datetime(autoDate).tz_localize(None)
-    
-    # if the start of the downtime is less then the interval we are interested in, set downtime to start of interval
-    # this avoids considering downtime outside of the time interval we are interesed in 
-    if noAutoDate < checkStart:
-        noAutoDate = checkStart
-
-    if autoDate > checkEnd:
-        autoDate = checkEnd
+    noAutoDate, autoDate = to_datetime(noAutoDate).tz_localize(None), to_datetime(autoDate).tz_localize(None) # 
 
     ret = (abs(autoDate - noAutoDate) / timedelta64(1,'s'))
 
@@ -51,6 +43,15 @@ def checkAutoReadyStatusDown(fleetDownStatus):
         return True
     else:
         return False
+
+# Given a datetime in Jira string format, check that it falls within the specified goal dates in the config. If they do, return true. Else, false.
+def checkValidDate(datetime):
+    datetime = to_datetime(datetime).tz_localize(None)
+    if datetime >= to_datetime(config.quarterStart) and datetime <= to_datetime(config.quarterEnd):
+        return True
+    else:
+        return False 
+
 
 def main():
     jira = createServerInstance()
@@ -77,16 +78,11 @@ def main():
             if vehicleImpact.field == 'Vehicle State Impact':
 
                 # if ticket was created in non-auto ready state -- vehicle impact only changed to monitor from grounded or manual only
-                if vehicleImpact.toString == 'Monitor' and initialCondition == True:
+                if vehicleImpact.toString == 'Monitor' and initialCondition == True and checkValidDate(change.created):
                     initialCondition = False
                     fleetDownStatus[issue.fields.customfield_10068[0]] = True # that index is the vehicle for issue. Yeah. 
                     downTime = timeDelta(initialDate, change.created)
                     print("Issue: {0} Downtime: {1} Date-range: {2} - {3}".format(issue.key, downTime, initialDate, change.created))
-                    
-                    # Lastly, if the site's definition of 100% auto availability is violated, then add downtime
-                    if checkAutoReadyStatusDown(fleetDownStatus):
-                        totalDowntime += downTime
-                        
                     continue
 
                 # catch when cars are made non-auto ready in ticket history
@@ -94,19 +90,14 @@ def main():
                     vehicleDown = True
                     initialCondition = False
                     downDate = change.created
-                    fleetDownStatus[issue.fields.customfield_10068[0]] = True 
                 
                 # mark the transition from non-auto ready to auto-ready, compute instance downtime and add to total downtime
-                if (vehicleImpact.toString == 'Monitor'):
+                if (vehicleImpact.toString == 'Monitor') and checkValidDate(change.created):
                     vehicleDown = False
                     fleetDownStatus[issue.fields.customfield_10068[0]] = False
                     upDate = change.created
                     downTime = timeDelta(downDate, upDate)
                     print("Issue: {0} Downtime: {1} Date-range: {2} - {3}".format(issue.key, downTime, downDate, upDate))
-
-                    # if site is not 100% auto ready, compute and add downtime
-                    if checkAutoReadyStatusDown(fleetDownStatus):
-                        totalDowntime += downTime
                         
                     
 
