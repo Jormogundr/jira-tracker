@@ -1,8 +1,4 @@
 # jira-tracker
-Goal start date: 2/9/22
-Goal end state: 3/31/22
-
-As of commit 6659a08, this does not give accurate results for auto readiness.
 
 Here's how to interpret solving this problem, and how to implement it.
 

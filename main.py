@@ -12,7 +12,8 @@ TODO:
 
 """
 
-from termios import TIOCINQ
+# ./bin/python3.8
+
 from jira import JIRA
 from pandas import date_range, to_datetime, DatetimeIndex
 from numpy import timedelta64
@@ -50,14 +51,22 @@ def checkValidDate(datetime):
     if datetime >= to_datetime(config.quarterStart) and datetime <= to_datetime(config.quarterEnd):
         return True
     else:
-        return False 
+        return False
 
+def fixDate(datetime):
+    datetime = to_datetime(datetime).tz_localize(None)
+    if datetime < to_datetime(config.quarterStart).tz_localize(None):
+        datetime = to_datetime(config.quarterStart).tz_localize(None)
+    if datetime > to_datetime(config.quarterEnd).tz_localize(None):
+        datetime = to_datetime(config.quarterEnd).tz_localize(None)
+    return datetime
 
 def main():
     jira = createServerInstance()
     startDate, endDate = config.quarterStart, config.quarterEnd
     query = 'project IN ("{0}") AND updatedDate >= "{1}" AND updatedDate <= "{2}" AND statusCategory in ("New", "In Progress", "Complete") AND type IN ("Fix On Site","Preventative Maintenance","Support Request") ORDER BY created DESC'.format(config.site, startDate, endDate)
     fleetDownStatus = dict((key,False) for key in config.fleet) # for each vehicle (key), False if auto-ready. True otherwise
+    intervals = []
 
     # main loop
     totalDowntime = 0
@@ -78,12 +87,16 @@ def main():
             if vehicleImpact.field == 'Vehicle State Impact':
 
                 # if ticket was created in non-auto ready state -- vehicle impact only changed to monitor from grounded or manual only
-                if vehicleImpact.toString == 'Monitor' and initialCondition == True and checkValidDate(change.created):
+                if vehicleImpact.toString == 'Monitor' and initialCondition == True:
                     initialCondition = False
                     fleetDownStatus[issue.fields.customfield_10068[0]] = True # that index is the vehicle for issue. Yeah. 
-                    downTime = timeDelta(initialDate, change.created)
-                    print("Issue: {0} Downtime: {1} Date-range: {2} - {3}".format(issue.key, downTime, initialDate, change.created))
+                    upDate = fixDate(change.created)
+                    downDate = fixDate(initialDate)
+                    downTime = timeDelta(downDate, upDate)
+                    print("Case 1 Issue: {0} Downtime: {1} Date-range: {2} - {3}".format(issue.key, downTime, downDate, upDate))
+                    intervals.append([to_datetime(downDate).tz_localize(None), to_datetime(upDate).tz_localize(None)])
                     continue
+
 
                 # catch when cars are made non-auto ready in ticket history
                 if (vehicleImpact.toString == 'Manual Only' or vehicleImpact.toString == 'Grounded') and vehicleDown == False:
@@ -92,14 +105,15 @@ def main():
                     downDate = change.created
                 
                 # mark the transition from non-auto ready to auto-ready, compute instance downtime and add to total downtime
-                if (vehicleImpact.toString == 'Monitor') and checkValidDate(change.created):
+                if (vehicleImpact.toString == 'Monitor'):
                     vehicleDown = False
                     fleetDownStatus[issue.fields.customfield_10068[0]] = False
-                    upDate = change.created
+                    upDate = fixDate(change.created)
+                    downDate = fixDate(downDate)
                     downTime = timeDelta(downDate, upDate)
-                    print("Issue: {0} Downtime: {1} Date-range: {2} - {3}".format(issue.key, downTime, downDate, upDate))
-                        
-                    
+                    print("Case 2 Issue: {0} Downtime: {1} Date-range: {2} - {3}".format(issue.key, downTime, downDate, upDate))
+                    intervals.append([to_datetime(downDate).tz_localize(None), to_datetime(upDate).tz_localize(None)])
+
 
     totTime = totalTime(date_range(startDate,endDate,freq='d'))
     autoReadinessPercent = abs((totTime - totalDowntime) / totTime) * 100
