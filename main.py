@@ -159,7 +159,6 @@ def computeDowntime(intervals: list) -> int:
             downTime += deltaT
 
         deltaT = previousEnd - start
-        print("Current Vehicle: {0} Prev Vehicle: {1} Current Start: {2} Prev End: {3} delta: {4} downtime: {5}".format(vehicle, previousVehicle, start, previousEnd, deltaT, downTime))
 
         # we're only interested in tracking downtime for two or more unique lexus vehicles
         if vehicle == previousVehicle:

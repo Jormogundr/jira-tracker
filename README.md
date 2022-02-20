@@ -1,8 +1,4 @@
 # jira-tracker
-Goal start date: 2/9/22
-Goal end state: 3/31/22
-
-As of commit 6659a08, this does not give accurate results for auto readiness.
 
 Here's how to interpret solving this problem, and how to implement it.
 
@@ -21,6 +17,11 @@ To implement this, we can try leaning on pandas dataframes. We first need to fil
 Google doc with relevant links: https://docs.google.com/document/d/1PtRzeIn91g6R7o_3z2s05CWrmnXzeaD0oXdioGWnzko/edit
 
 # Environment setup:
+Go to https://maymobility.atlassian.net/jira/your-work and click on the gear icon > Atlassian Account Settings > Security > Create and manage API tokens > Create API Token. Copy this token to jiraConfig.jiraToken
+
+While you're there, make sure the email associated with your Jira account is entered, and the server name is correct, e.g. 'https://maymobility.atlassian.net/'
+
+Then, install dependencies:
 
 pip install virtualenv
 
