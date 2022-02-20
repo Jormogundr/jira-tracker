@@ -6,119 +6,191 @@ Uptime is defined as having no more than one Lexus in a non-auto ready state (ma
 
 100% auto readiness therefore is limited to two cases: where the whole fleet is auto ready, or where only one Lexus is NOT auto ready.
 
+
 TODO: 
     - Identify those tickets which most severely impact auto-readiness.
-    - Exclude non-operating hours from uptime calculations.
+    - What about if/when a vehicle is non-auto ready for the WHOLE quarter...?
+    - Add a function checkAutoReadiness() that clearly applies auto readiness condition logic so this program can be easily changed for changing definition in future. Currently all of that logic is in computeDowntime()
+    - Write test cases for computeDowntime() to make sure it is working as expected.
+    - Holidays? 
 
 """
-
 # ./bin/python3.8
 
 from jira import JIRA
-from pandas import date_range, to_datetime, DatetimeIndex
-from numpy import timedelta64
-import config
+from pandas import Timedelta, to_datetime, bdate_range, Timestamp
+from numpy import busday_count
 
-def createServerInstance():
-    serverOptions = {'server': config.serverName}
-    jiraServer = JIRA(options=serverOptions, basic_auth=(config.email, config.jiraToken))
+import config
+import jiraConfig
+
+"""
+Returns a Jira class generated from the jira config info.
+"""
+def createServerInstance() -> JIRA:
+    serverOptions = {'server': jiraConfig.serverName}
+    jiraServer = JIRA(options=serverOptions, basic_auth=(jiraConfig.email, jiraConfig.jiraToken))
     return jiraServer
 
-# given the date range of interest, compute and return total time in seconds
-def totalTime(days):
-    return len(days) * 86400
+""" 
+Given the date range of interest, compute and return total time in seconds that the site is open (service hours). Return type is int.
+"""
+def computeTotalTime() -> int:
+    start = config.quarterStart
+    end = config.quarterEnd
+    NUM_WEEKDAYS = busday_count(start, end)
+    SECONDS_IN_BUSINESS_DAY = (config.close - config.open) * 3600
+    return NUM_WEEKDAYS * SECONDS_IN_BUSINESS_DAY
 
-# given the date/time of a vehicle state impact change that took a vehicle out of auto ready and the date/time of when it was taken out, compute and return the time in seconds between the two dates/times
-def timeDelta(noAutoDate, autoDate):
+"""
+Given two pandas datetime objects with timestamps in the form ('YYYY-MM-DD HH:MM:SS.XXXXXX'), compute the downtime. Downtime only accrues for business days within the range defined by the bounds [start, end]. The start and end timestamps are generated from Jira ticket update and creation timestamps, so it must be checked that these times fall within normal site operating hours (since we only want to accrue downtime while the site is open for business), and if not, adjust them for the final computation. The sum deltaT is the accrued downtime, which is stored in a pandas Timedelta object, and is what this function returns.
 
-    # convert date times to the same pandas date time format, and strip the timezone data from the collected Jira dates
-    noAutoDate, autoDate = to_datetime(noAutoDate).tz_localize(None), to_datetime(autoDate).tz_localize(None) # 
+The order of operations here are: 
+1. find the time delta in business days and convert to seconds, then add to sum deltaT 
+2. With the scope of the problem now reduced to difference in time during day, enforce condition that we are only accounting for open operating times
+3. Finally, compute the timedelta based on whether we needed to adjust the interval or not. 
 
-    ret = (abs(autoDate - noAutoDate) / timedelta64(1,'s'))
+"""
+def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
+    SITE_DAILY_OPERATING_SECONDS = (config.close - config.open) * 3600
+    timeCorrection = False
 
-    return ret
+    # initialize the sum tracking accrued downtime to the difference between end and start in business seconds
+    deltaT = (len(bdate_range(start,end)) - 1) * SITE_DAILY_OPERATING_SECONDS
 
-# Given a dictionary containing keys (vehicles) and values (0 if auto ready, 1 if not), determine if the site is 100% auto-ready
-def checkAutoReadyStatusDown(fleetDownStatus):
-    if sum(fleetDownStatus.values()) >= 2 or fleetDownStatus[config.WAMs]:
-        return True
+    # check if interval open/closing times are confined to site operating hours
+    # TODO handle cases where endHour < config.open, and startHour > config.close
+    startHour, endHour = start.hour, end.hour
+    if startHour < config.open:
+        startHour = 8
+        timeCorrection = True
+    if endHour > config.close:
+        endHour = 20
+        timeCorrection = True
+
+    # the passed datetime objects fall within normal operating hours for a given day
+    # at this point, scope of problem is reduced to finding difference at HOUR:MIN:SEC precision
+    # end and start are both datetime objects and the minus sign is overloaded so that a datetime object results from the operation
     else:
-        return False
+        deltaT += (end - start).seconds
+    
 
-# Given a datetime in Jira string format, check that it falls within the specified goal dates in the config. If they do, return true. Else, false.
-def checkValidDate(datetime):
-    datetime = to_datetime(datetime).tz_localize(None)
-    if datetime >= to_datetime(config.quarterStart) and datetime <= to_datetime(config.quarterEnd):
-        return True
-    else:
-        return False
+    if timeCorrection:
+        deltaT += (endHour - startHour) * 60
 
-def fixDate(datetime):
-    datetime = to_datetime(datetime).tz_localize(None)
-    if datetime < to_datetime(config.quarterStart).tz_localize(None):
-        datetime = to_datetime(config.quarterStart).tz_localize(None)
-    if datetime > to_datetime(config.quarterEnd).tz_localize(None):
-        datetime = to_datetime(config.quarterEnd).tz_localize(None)
-    return datetime
+    return Timedelta(deltaT, unit='seconds')
 
-def main():
-    jira = createServerInstance()
-    startDate, endDate = config.quarterStart, config.quarterEnd
-    query = 'project IN ("{0}") AND updatedDate >= "{1}" AND updatedDate <= "{2}" AND statusCategory in ("New", "In Progress", "Complete") AND type IN ("Fix On Site","Preventative Maintenance","Support Request") ORDER BY created DESC'.format(config.site, startDate, endDate)
-    fleetDownStatus = dict((key,False) for key in config.fleet) # for each vehicle (key), False if auto-ready. True otherwise
-    intervals = []
+"""
+Given a date as a string in the form 'YYYY-MM-DD', or a string in the date time format used by Jira (e.g. '2022-01-14T13:25:07.139-0500'), convert the string to a pandas datetime object and strip any possible timezone information. Return the pandas datetime object.
+"""
+def createDatetimeObject(date: str) -> Timestamp:
+    return to_datetime(date).tz_localize(None)
 
-    # main loop
-    totalDowntime = 0
-    for issue in jira.search_issues(jql_str=query):
+"""
+INPUT: 
+    - relatedIssues: A list of jira ticket objects
+    - jira: a jira server instance
+    - dateTimeRange: two element list containing pandas datetime objects - the closed interval for the date range of interest
+OUTPUT:
+    - A three element list containing an interval, and the related vehicle name e.g. [initialDatetime, finalDatetime, vehicle]. initialDatetime, finalDatetime are themselves pandas datetime objects, and vehicle is a string. These intervals are filtered out from the list of Jira tickets for the given dateTimeRange. The interval itself indicates the time period where the vehicle was NOT auto ready. 
+"""
+def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: list) -> list:
+    startDatetime, endDatetime = dateTimeRange[0], dateTimeRange[1]
+    fleetIntervals = []
+
+    for issue in relatedIssues:
 
         # fetch the history for a particular issue using the issue key (ex. 'AA-598'). The slicing ensures the history is in ascending datetime order
-        issueHistory = jira.issue(id=issue.id, expand='changelog').changelog.histories[::-1]
+        changelog = jira.issue(id=issue.id, expand='changelog').changelog.histories[::-1]
+        initialCondition = True # used to track if ticket was created in non-auto ready state
+        initialDate = createDatetimeObject(issue.fields.created)
 
-        # for a given single issue, loop through the history items and compute downtime using vehicle impact field changes
-        vehicleDown = False
-        initialCondition = True # this is used to account for cases where ticket is initially created in non-auto ready state, since parsing ticket history skips these cases
-        initialDate = issue.fields.created
+        for i, change in enumerate(changelog):
+            vehicleImpact = changelog[i].items[0]
+            changeDate = createDatetimeObject(change.created)
+            vehicle = issue.fields.customfield_10068[0].capitalize()
 
-        for i, change in enumerate(issueHistory):
-            vehicleImpact = issueHistory[i].items[0]
+            # if history item changes Vehicle State Impact and change was made within period of interest
+            if vehicleImpact.field == 'Vehicle State Impact' and changeDate > startDatetime and changeDate < endDatetime:
 
-            # if history item changes Vehicle State Impact, else ignore
-            if vehicleImpact.field == 'Vehicle State Impact':
-
-                # if ticket was created in non-auto ready state -- vehicle impact only changed to monitor from grounded or manual only
+                # if ticket was created in non-auto ready state -- vehicle impact only changed to monitor from grounded or manual only. The inequality conditions check that we are only adding downtime for non-auto changes within the period of interest.
                 if vehicleImpact.toString == 'Monitor' and initialCondition == True:
                     initialCondition = False
-                    fleetDownStatus[issue.fields.customfield_10068[0]] = True # that index is the vehicle for issue. Yeah. 
-                    upDate = fixDate(change.created)
-                    downDate = fixDate(initialDate)
-                    downTime = timeDelta(downDate, upDate)
-                    print("Case 1 Issue: {0} Downtime: {1} Date-range: {2} - {3}".format(issue.key, downTime, downDate, upDate))
-                    intervals.append([to_datetime(downDate).tz_localize(None), to_datetime(upDate).tz_localize(None)])
+
+                    # if ticket was created in non-auto state but vehicle impact was updated within period of interest
+                    if initialDate < startDatetime:
+                        initialDate = startDatetime
+    
+                    fleetIntervals.append([initialDate, changeDate, vehicle])
                     continue
 
-
-                # catch when cars are made non-auto ready in ticket history
-                if (vehicleImpact.toString == 'Manual Only' or vehicleImpact.toString == 'Grounded') and vehicleDown == False:
-                    vehicleDown = True
+                # catch when cars are made non-auto ready in ticket history when the change occurs after the start of the period of interest
+                if (vehicleImpact.toString == 'Manual Only' or vehicleImpact.toString == 'Grounded'):
                     initialCondition = False
-                    downDate = change.created
+                    downDate = changeDate
                 
                 # mark the transition from non-auto ready to auto-ready, compute instance downtime and add to total downtime
                 if (vehicleImpact.toString == 'Monitor'):
-                    vehicleDown = False
-                    fleetDownStatus[issue.fields.customfield_10068[0]] = False
-                    upDate = fixDate(change.created)
-                    downDate = fixDate(downDate)
-                    downTime = timeDelta(downDate, upDate)
-                    print("Case 2 Issue: {0} Downtime: {1} Date-range: {2} - {3}".format(issue.key, downTime, downDate, upDate))
-                    intervals.append([to_datetime(downDate).tz_localize(None), to_datetime(upDate).tz_localize(None)])
+                    fleetIntervals.append([downDate, changeDate, vehicle])
 
+    return fleetIntervals
 
-    totTime = totalTime(date_range(startDate,endDate,freq='d'))
-    autoReadinessPercent = abs((totTime - totalDowntime) / totTime) * 100
-    print(autoReadinessPercent, "'%' auto ready")
+"""
+Given a list of intervals compute in seconds the amount of overlap between intervals for two or more lexus vehicles, and the amount of time in the interval if is the WAMs. Each interval is a three-elem list in the form [initialDatetime, finalDatetime, vehicleName] where each datetime is a numpy datetime object). Return the total downtime in seconds as an integer, as accessed from the datetime.seconds attribute.
 
+The main logic that determines auto readiness is applied here.
+"""
+def computeDowntime(intervals: list) -> int:
+    intervals.sort()
+    previousEnd = intervals[0][1]
+    previousVehicle = intervals[0][2]
+    downTime = Timedelta(value=0, unit='seconds')
+
+    # check if first vehicle in list is WAMs and as downtime as needed
+    if intervals[0][2] == config.WAMs:
+        downTime += computeTimeDelta(intervals[[0][0]], intervals[0][1])
+
+    # compare two adjacent intervals at a time, specifically the current intervals start point and the previous intervals end point 
+    for start, end, vehicle in intervals[1:]:
+
+        # by auto readiness definition, if WAMs is down, then downtime is accruing
+        if vehicle == config.WAMs:
+            deltaT = computeTimeDelta(start, end)
+            downTime += deltaT
+
+        deltaT = previousEnd - start
+
+        # we're only interested in tracking downtime for two or more unique lexus vehicles
+        if vehicle == previousVehicle:
+            previousEnd = end
+            previousVehicle = vehicle
+            continue
+
+        # if current interval's start value is less than previous interval's end, then intervals overlap, so downtime is accruing. Note [start, previousEnd] is the interval of overlap
+        if start < previousEnd:
+            downTime += computeTimeDelta(start, previousEnd)
+            
+        previousVehicle = vehicle
+        previousEnd = end
+
+    return downTime.seconds
+
+"""
+Given an integer value downtime in seconds, compute and return the percent auto readiness as a float.
+"""
+def computeAutoReadyPercent(downtime: int) -> int:
+    totalTime = computeTotalTime()
+    return ((totalTime - downtime)/totalTime) * 100
+
+def main():
+    dateTimeRange =  [createDatetimeObject(config.quarterStart), createDatetimeObject(config.quarterEnd)]
+    jira = createServerInstance()
+    relatedIssues = jira.search_issues(jql_str=config.query)[::-1]
+    intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
+    downtime = computeDowntime(intervals)
+    autoReadyPercent = computeAutoReadyPercent(downtime)
+    print("Auto readiness is {0}".format(autoReadyPercent))
+    
 if __name__ == '__main__':
     main()
     print('End program')

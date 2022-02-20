@@ -3,5 +3,5 @@ bin/
 lib/
 
 # contains sensitive information
-config.py
+jiraConfig.py
 pyvenv.cfg
