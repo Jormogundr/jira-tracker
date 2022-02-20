@@ -14,8 +14,6 @@ Here, a box is generated any time a vehicle goes down. The box's length covers t
 
 To implement this, we can try leaning on pandas dataframes. We first need to filter out only the relevant date changes for all tickets in Jira that were updated over the timeline. 
 
-Google doc with relevant links: https://docs.google.com/document/d/1PtRzeIn91g6R7o_3z2s05CWrmnXzeaD0oXdioGWnzko/edit
-
 # Environment setup:
 
 pip install virtualenv
