@@ -35,6 +35,3 @@ pip install -r requirements.txt
 
 Run using the python3.8 interpeter in ./bin/
 
-# Notes
-
-Use pip freeze > requirements.txt to create/update python dependencies list
