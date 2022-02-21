@@ -74,7 +74,6 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
     else:
         deltaT += (end - start).seconds
     
-
     if timeCorrection:
         deltaT += (endHour - startHour) * 60
 
@@ -136,7 +135,7 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
     return fleetIntervals
 
 """
-Given a list of intervals compute in seconds the amount of overlap between intervals for two or more lexus vehicles, and the amount of time in the interval if is the WAMs. Each interval is a three-elem list in the form [initialDatetime, finalDatetime, vehicleName] where each datetime is a numpy datetime object). Return the total downtime in seconds as an integer, as accessed from the datetime.seconds attribute.
+Given a list of intervals and the associated vehicle name, compute in seconds the amount of overlap between intervals for two or more lexus vehicles, and the amount of time in the interval if is the WAMs. Each interval is a three-elem list in the form [initialDatetime, finalDatetime, vehicleName] where each datetime is a numpy datetime object). Return the total downtime in seconds as an integer, as accessed from the datetime.seconds attribute.
 
 The main logic that determines auto readiness is applied here.
 """
@@ -157,8 +156,6 @@ def computeDowntime(intervals: list) -> int:
         if vehicle == config.WAMs:
             deltaT = computeTimeDelta(start, end)
             downTime += deltaT
-
-        deltaT = previousEnd - start
 
         # we're only interested in tracking downtime for two or more unique lexus vehicles
         if vehicle == previousVehicle:
@@ -182,14 +179,42 @@ def computeAutoReadyPercent(downtime: int) -> int:
     totalTime = computeTotalTime()
     return ((totalTime - downtime)/totalTime) * 100
 
+"""
+"Unique" intervals are intervals with different vehicles. 
+Test computeDowntime()
+    - [0] When one interval falls outside of time period of interest. Only business seconds should be counted, rest ignored.
+    - [1,2] When two intervals are identical (overlap guaranteed but same vehicle. Should be ignored). 0 minutes added
+    - [2,3] When two intervals are identical EXCEPT the vehicle is different (entire interval should be counted). Should be 15 minutes added.
+    - [4] When one interval falls within business hours and is a WAMS vehicle. All time should be added. Should be 15 minutes added.
+    - [5,6] When two unique intervals overlap but most of the overlap falls outside of the business. Should be 15 minutes added.
+
+
+"""
+def tests():
+    # test cases
+    computeDowntimeTestCases = [
+        [Timestamp('2021-12-31 23:59:59.064000'), Timestamp('2021-04-01 00:00:00.064000'), 'Momo'], 
+        [Timestamp('2021-01-01 07:30:00.000000'), Timestamp('2021-01-01 07:45:00.000000'), 'Momo'],
+        [Timestamp('2021-01-01 07:30:00.000000'), Timestamp('2021-01-01 07:45:00.000000'), 'Momo'],
+        [Timestamp('2021-01-01 07:30:00.000000'), Timestamp('2021-01-01 07:45:00.000000'), 'Mitzi'],
+        [Timestamp('2021-01-01 07:30:00.000000'), Timestamp('2021-01-01 07:45:00.000000'), 'Mukti'],
+        [Timestamp('2021-01-01 07:30:00.000000'), Timestamp('2021-01-01 08:15:00.000000'), 'Makeba'],
+        [Timestamp('2021-01-01 08:00:00.000000'), Timestamp('2021-01-01 08:45:00.000000'), 'Marinara']
+        ]
+
+    # function calls
+    computeDowntime(computeDowntimeTestCases)
+    
+
 def main():
-    dateTimeRange =  [createDatetimeObject(config.quarterStart), createDatetimeObject(config.quarterEnd)]
-    jira = createServerInstance()
-    relatedIssues = jira.search_issues(jql_str=config.query)[::-1]
-    intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
-    downtime = computeDowntime(intervals)
-    autoReadyPercent = computeAutoReadyPercent(downtime)
-    print("Auto readiness is {0}".format(autoReadyPercent))
+    tests()
+    # dateTimeRange =  [createDatetimeObject(config.quarterStart), createDatetimeObject(config.quarterEnd)]
+    # jira = createServerInstance()
+    # relatedIssues = jira.search_issues(jql_str=config.query)[::-1]
+    # intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
+    # downtime = computeDowntime(intervals)
+    # autoReadyPercent = computeAutoReadyPercent(downtime)
+    # print("Auto readiness is {0}".format(autoReadyPercent))
     
 if __name__ == '__main__':
     main()
