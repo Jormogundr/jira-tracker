@@ -57,7 +57,8 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
 
     # initialize the sum tracking accrued downtime to the difference between end and start in business seconds
     # the bdate_range will always include the starting date, so we account for this by subtracting it 
-    deltaT = len(bdate_range(start,end)) * SITE_DAILY_OPERATING_SECONDS
+    # holidays can be included as an argument to this function
+    deltaT = len(bdate_range(start, end, closed='left')) * SITE_DAILY_OPERATING_SECONDS
 
     # check if interval open/closing times are confined to site operating hours
     # TODO handle cases where endHour < config.open, and startHour > config.close
@@ -80,7 +81,8 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
     # at this point, scope of problem is reduced to finding difference at HOUR:MIN:SEC precision
     # end and start are both datetime objects and the minus sign is overloaded so that a datetime object results from the operation
     else:
-        deltaT += (end - start).seconds
+        diff = end - start
+        deltaT += diff.seconds
     
     if timeCorrection:
         deltaT += (endHour - startHour) * 60
@@ -153,6 +155,7 @@ def computeDowntime(intervals: list) -> int:
     previousVehicle = intervals[0][2]
     downTime = Timedelta(value=0, unit='seconds')
     overlappingIntervals = [] # keep track of overlapping intervals to avoid counting identical intervals
+    SECONDS_IN_DAY = 86400
 
     # check if first vehicle in list is WAMs and as downtime as needed
     if intervals[0][2] == config.WAMs:
@@ -177,14 +180,14 @@ def computeDowntime(intervals: list) -> int:
 
         overlap = [start, previousEnd]
 
-        # if current interval's start value is less than previous interval's end, then intervals overlap, so downtime is accruing. Note [start, previousEnd] is the interval of overlap
+        # if current interval's start value is less than previous interval's end, then intervals overlap, so downtime is accruing. Note [start, previousEnd] is the interval of overlap. Do NOT accrue downtime if the downtime interval has already been accounted for!
         if start < previousEnd and overlap not in overlappingIntervals:
             overlappingIntervals.append(overlap)
             downTime += computeTimeDelta(start, previousEnd)
             previousVehicle = vehicle
             previousEnd = end
 
-    return downTime.seconds
+    return downTime.seconds + downTime.days * SECONDS_IN_DAY
 
 """
 Given an integer value downtime in seconds, compute and return the percent auto readiness as a float.
@@ -196,18 +199,17 @@ def computeAutoReadyPercent(downtime: int) -> int:
 """
 "Unique" intervals are intervals with different vehicles. 
 Test computeDowntime()
-    - When we have three vehicles down - does it double count time or not? Should add 45. Check
-    - When we have four vehicles down - does it double count time or not? Should add 45. Bugged -- FIXED!
+    - When we have three vehicles down - does it double count time or not? Should add 45 min. Check
+    - When we have four vehicles down - does it double count time or not? Should add 45 min. Bugged -- FIXED!
+    - When we have two vehicles down the whole duration, with intervals that exceed the date range of interest.
 
 
 """
 def tests():
     # test cases
     computeDowntimeTestCases = [
-        [Timestamp('2022-01-02 08:00:00.000000'), Timestamp('2022-01-01 08:45:00.000000'), 'Marinara'],
-        [Timestamp('2022-01-01 08:00:00.000000'), Timestamp('2022-01-01 08:45:00.000000'), 'Makeba'],
-        [Timestamp('2022-01-01 08:00:00.000000'), Timestamp('2022-01-01 08:45:00.000000'), 'Mayble'],
-        [Timestamp('2022-01-01 08:00:00.000000'), Timestamp('2022-01-01 08:45:00.000000'), 'Momo']
+        [Timestamp('2021-12-31 08:00:00.000000'), Timestamp('2022-04-01 08:45:00.000000'), 'Marinara'],
+        [Timestamp('2021-12-31 08:00:00.000000'), Timestamp('2022-04-01 08:45:00.000000'), 'Momo']
         ]
 
     # function calls
