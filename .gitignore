@@ -5,3 +5,7 @@ lib/
 # contains sensitive information
 jiraConfig.py
 pyvenv.cfg
+
+# housekeeping
+pyvenv.cfg
+settings.json
