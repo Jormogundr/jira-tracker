@@ -14,9 +14,12 @@ Here, a box is generated any time a vehicle goes down. The box's length covers t
 
 To implement this, we can try leaning on pandas dataframes. We first need to filter out only the relevant date changes for all tickets in Jira that were updated over the timeline. 
 
-Google doc with relevant links: https://docs.google.com/document/d/1PtRzeIn91g6R7o_3z2s05CWrmnXzeaD0oXdioGWnzko/edit
-
 # Environment setup:
+Go to https://maymobility.atlassian.net/jira/your-work and click on the gear icon > Atlassian Account Settings > Security > Create and manage API tokens > Create API Token. Copy this token to jiraConfig.jiraToken
+
+While you're there, make sure the email associated with your Jira account is entered, and the server name is correct, e.g. 'https://maymobility.atlassian.net/'
+
+Then, install dependencies:
 
 pip install virtualenv
 
@@ -30,6 +33,3 @@ pip install -r requirements.txt
 
 Run using the python3.8 interpeter in ./bin/
 
-# Notes
-
-Use pip freeze > requirements.txt to create/update python dependencies list
