@@ -1,6 +1,8 @@
 # jira-tracker
 
-Here's how to interpret solving this problem, and how to implement it.
+This tool is meant to be a metric generator for sites to use to track auto readiness, as part of the larger goal of achieving driver out readiness by the end of the year.
+
+# Solution
 
 First, we must define auto-readiness. One hundred percent auto-readiness is no more than one Lexus vehicle down, and the GEM must not be down. Down is manual only or grounded. 
 
