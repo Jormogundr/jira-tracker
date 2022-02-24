@@ -58,7 +58,7 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
     # initialize the sum tracking accrued downtime to the difference between end and start in business seconds
     # the bdate_range will always include the starting date, so we account for this by subtracting it 
     # holidays can be included as an argument to this function
-    deltaT = len(bdate_range(start, end, closed='left')) * SITE_DAILY_OPERATING_SECONDS
+    deltaT = len(bdate_range(start, end, inclusive='neither')) * SITE_DAILY_OPERATING_SECONDS
 
     # check if interval open/closing times are confined to site operating hours
     # TODO handle cases where endHour < config.open, and startHour > config.close
@@ -78,7 +78,7 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
         timeCorrection = True
 
     if timeCorrection:
-        deltaT += (endHour - startHour) * 3600 # convert difference in hours to seconds
+        deltaT += abs(endHour - startHour) * 3600 # convert difference in hours to seconds
     
     # the passed datetime objects fall within normal operating hours for a given day
     # at this point, scope of problem is reduced to finding difference at HOUR:MIN:SEC precision
@@ -131,6 +131,7 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
                         initialDate = startDatetime
     
                     fleetIntervals.append([initialDate, changeDate, vehicle])
+                    print(issue.key, "\t", vehicle, "\t", initialDate, "\t", changeDate)
                     continue
 
                 # catch when cars are made non-auto ready in ticket history when the change occurs after the start of the period of interest
@@ -141,6 +142,7 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
                 # mark the transition from non-auto ready to auto-ready, compute instance downtime and add to total downtime
                 if (vehicleImpact.toString == 'Monitor'):
                     fleetIntervals.append([downDate, changeDate, vehicle])
+                    print(issue.key, "\t", vehicle, "\t", downDate, "\t", changeDate)
 
     return fleetIntervals
 
@@ -150,6 +152,11 @@ Given a list of intervals and the associated vehicle name, compute in seconds th
 The main logic that determines auto readiness is applied here.
 """
 def computeDowntime(intervals: list) -> int:
+
+    # no detected downtime
+    if len(intervals) == 0:
+        return Timedelta(value=0, unit='seconds').seconds
+
     intervals.sort(key = lambda x: x[0])
     previousEnd = intervals[0][1]
     previousVehicle = intervals[0][2]
@@ -180,10 +187,11 @@ def computeDowntime(intervals: list) -> int:
 
         overlap = [start, previousEnd]
 
-        # if current interval's start value is less than previous interval's end, then intervals overlap, so downtime is accruing. Note [start, previousEnd] is the interval of overlap. Do NOT accrue downtime if the downtime interval has already been accounted for!
+        # if current interval's start value is less than previous interval's end, then intervals overlap, so downtime is accruing. Do NOT accrue downtime if the downtime interval has already been accounted for! The overlap interval is [start, min(previousEnd, end)]
+        # TODO: I think we need to remove this selected interval from the pool of intervals we are considering, otherwise we may not account for all downtime. 
         if start < previousEnd and overlap not in overlappingIntervals:
             overlappingIntervals.append(overlap)
-            downTime += computeTimeDelta(start, previousEnd)
+            downTime += computeTimeDelta(start, min(previousEnd, end))
             previousVehicle = vehicle
             previousEnd = end
 
@@ -202,12 +210,16 @@ Test computeDowntime()
     - When we have three vehicles down - does it double count time or not? Should add 45 min. Check
     - When we have four vehicles down - does it double count time or not? Should add 45 min. Bugged -- FIXED!
     - When we have two vehicles down the whole duration, with intervals that exceed the date range of interest. Bugged -- FIXED!
-    - When ONLY the GEM is down for a full day, with time in off hours.
+    - When ONLY the GEM is down for a full day, with time in off hours. Bugged -- FIXED!
+    - When downtime intervals exist for the same platform (possible with redundant/duplicate tickets).  Check
+    - When downtime exists for two vehicles, each with duplicate/redundant intervals. Check
+    - When no downtime exists. Bugged -- FIXED
+    - 
 """
 def tests():
     # test cases
     computeDowntimeTestCases = [
-        [Timestamp('2022-01-01 00:00:00.000000'), Timestamp('2022-01-01 23:59:59.999999'), 'Mukti']
+        [Timestamp('2021-12-31 08:00:00.000000'), Timestamp('2022-04-01 08:45:00.000000'), 'Marinara']
         ]
 
     # function calls
@@ -215,14 +227,14 @@ def tests():
     
 
 def main():
-    tests()
-    # dateTimeRange =  [createDatetimeObject(config.quarterStart), createDatetimeObject(config.quarterEnd)]
-    # jira = createServerInstance()
-    # relatedIssues = jira.search_issues(jql_str=config.query)[::-1]
-    # intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
-    # downtime = computeDowntime(intervals)
-    # autoReadyPercent = computeAutoReadyPercent(downtime)
-    # print("Auto readiness is {0}".format(autoReadyPercent))
+    # tests()
+    dateTimeRange =  [createDatetimeObject(config.quarterStart), createDatetimeObject(config.quarterEnd)]
+    jira = createServerInstance()
+    relatedIssues = jira.search_issues(jql_str=config.query)[::-1]
+    intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
+    downtime = computeDowntime(intervals)
+    autoReadyPercent = computeAutoReadyPercent(downtime)
+    print("Auto readiness is {0}".format(autoReadyPercent))
     
 if __name__ == '__main__':
     main()
