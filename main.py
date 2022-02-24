@@ -77,15 +77,15 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
         endHour = 8
         timeCorrection = True
 
+    if timeCorrection:
+        deltaT += (endHour - startHour) * 3600 # convert difference in hours to seconds
+    
     # the passed datetime objects fall within normal operating hours for a given day
     # at this point, scope of problem is reduced to finding difference at HOUR:MIN:SEC precision
     # end and start are both datetime objects and the minus sign is overloaded so that a datetime object results from the operation
     else:
         diff = end - start
         deltaT += diff.seconds
-    
-    if timeCorrection:
-        deltaT += (endHour - startHour) * 60
 
     return Timedelta(deltaT, unit='seconds')
 
@@ -201,15 +201,13 @@ def computeAutoReadyPercent(downtime: int) -> int:
 Test computeDowntime()
     - When we have three vehicles down - does it double count time or not? Should add 45 min. Check
     - When we have four vehicles down - does it double count time or not? Should add 45 min. Bugged -- FIXED!
-    - When we have two vehicles down the whole duration, with intervals that exceed the date range of interest.
-
-
+    - When we have two vehicles down the whole duration, with intervals that exceed the date range of interest. Bugged -- FIXED!
+    - When ONLY the GEM is down for a full day, with time in off hours.
 """
 def tests():
     # test cases
     computeDowntimeTestCases = [
-        [Timestamp('2021-12-31 08:00:00.000000'), Timestamp('2022-04-01 08:45:00.000000'), 'Marinara'],
-        [Timestamp('2021-12-31 08:00:00.000000'), Timestamp('2022-04-01 08:45:00.000000'), 'Momo']
+        [Timestamp('2022-01-01 00:00:00.000000'), Timestamp('2022-01-01 23:59:59.999999'), 'Mukti']
         ]
 
     # function calls
