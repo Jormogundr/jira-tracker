@@ -56,16 +56,24 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
     timeCorrection = False
 
     # initialize the sum tracking accrued downtime to the difference between end and start in business seconds
-    deltaT = (len(bdate_range(start,end)) - 1) * SITE_DAILY_OPERATING_SECONDS
+    # the bdate_range will always include the starting date, so we account for this by subtracting it 
+    deltaT = len(bdate_range(start,end)) * SITE_DAILY_OPERATING_SECONDS
 
     # check if interval open/closing times are confined to site operating hours
     # TODO handle cases where endHour < config.open, and startHour > config.close
+    # TODO Seems like there's a simpler solution than this ugly block
     startHour, endHour = start.hour, end.hour
     if startHour < config.open:
         startHour = 8
         timeCorrection = True
+    if startHour > config.close:
+        startHour = 20
+        timeCorrection = True
     if endHour > config.close:
         endHour = 20
+        timeCorrection = True
+    if endHour < config.open:
+        endHour = 8
         timeCorrection = True
 
     # the passed datetime objects fall within normal operating hours for a given day
@@ -140,14 +148,15 @@ Given a list of intervals and the associated vehicle name, compute in seconds th
 The main logic that determines auto readiness is applied here.
 """
 def computeDowntime(intervals: list) -> int:
-    intervals.sort()
+    intervals.sort(key = lambda x: x[0])
     previousEnd = intervals[0][1]
     previousVehicle = intervals[0][2]
     downTime = Timedelta(value=0, unit='seconds')
+    overlappingIntervals = [] # keep track of overlapping intervals to avoid counting identical intervals
 
     # check if first vehicle in list is WAMs and as downtime as needed
     if intervals[0][2] == config.WAMs:
-        downTime += computeTimeDelta(intervals[[0][0]], intervals[0][1])
+        downTime += computeTimeDelta(intervals[0][0], intervals[0][1])
 
     # compare two adjacent intervals at a time, specifically the current intervals start point and the previous intervals end point 
     for start, end, vehicle in intervals[1:]:
@@ -156,6 +165,9 @@ def computeDowntime(intervals: list) -> int:
         if vehicle == config.WAMs:
             deltaT = computeTimeDelta(start, end)
             downTime += deltaT
+            previousEnd = end
+            previousVehicle = vehicle
+            continue
 
         # we're only interested in tracking downtime for two or more unique lexus vehicles
         if vehicle == previousVehicle:
@@ -163,12 +175,14 @@ def computeDowntime(intervals: list) -> int:
             previousVehicle = vehicle
             continue
 
+        overlap = [start, previousEnd]
+
         # if current interval's start value is less than previous interval's end, then intervals overlap, so downtime is accruing. Note [start, previousEnd] is the interval of overlap
-        if start < previousEnd:
+        if start < previousEnd and overlap not in overlappingIntervals:
+            overlappingIntervals.append(overlap)
             downTime += computeTimeDelta(start, previousEnd)
-            
-        previousVehicle = vehicle
-        previousEnd = end
+            previousVehicle = vehicle
+            previousEnd = end
 
     return downTime.seconds
 
@@ -182,28 +196,22 @@ def computeAutoReadyPercent(downtime: int) -> int:
 """
 "Unique" intervals are intervals with different vehicles. 
 Test computeDowntime()
-    - [0] When one interval falls outside of time period of interest. Only business seconds should be counted, rest ignored.
-    - [1,2] When two intervals are identical (overlap guaranteed but same vehicle. Should be ignored). 0 minutes added
-    - [2,3] When two intervals are identical EXCEPT the vehicle is different (entire interval should be counted). Should be 15 minutes added.
-    - [4] When one interval falls within business hours and is a WAMS vehicle. All time should be added. Should be 15 minutes added.
-    - [5,6] When two unique intervals overlap but most of the overlap falls outside of the business. Should be 15 minutes added.
+    - When we have three vehicles down - does it double count time or not? Should add 45. Check
+    - When we have four vehicles down - does it double count time or not? Should add 45. Bugged -- FIXED!
 
 
 """
 def tests():
     # test cases
     computeDowntimeTestCases = [
-        [Timestamp('2021-12-31 23:59:59.064000'), Timestamp('2021-04-01 00:00:00.064000'), 'Momo'], 
-        [Timestamp('2021-01-01 07:30:00.000000'), Timestamp('2021-01-01 07:45:00.000000'), 'Momo'],
-        [Timestamp('2021-01-01 07:30:00.000000'), Timestamp('2021-01-01 07:45:00.000000'), 'Momo'],
-        [Timestamp('2021-01-01 07:30:00.000000'), Timestamp('2021-01-01 07:45:00.000000'), 'Mitzi'],
-        [Timestamp('2021-01-01 07:30:00.000000'), Timestamp('2021-01-01 07:45:00.000000'), 'Mukti'],
-        [Timestamp('2021-01-01 07:30:00.000000'), Timestamp('2021-01-01 08:15:00.000000'), 'Makeba'],
-        [Timestamp('2021-01-01 08:00:00.000000'), Timestamp('2021-01-01 08:45:00.000000'), 'Marinara']
+        [Timestamp('2022-01-02 08:00:00.000000'), Timestamp('2022-01-01 08:45:00.000000'), 'Marinara'],
+        [Timestamp('2022-01-01 08:00:00.000000'), Timestamp('2022-01-01 08:45:00.000000'), 'Makeba'],
+        [Timestamp('2022-01-01 08:00:00.000000'), Timestamp('2022-01-01 08:45:00.000000'), 'Mayble'],
+        [Timestamp('2022-01-01 08:00:00.000000'), Timestamp('2022-01-01 08:45:00.000000'), 'Momo']
         ]
 
     # function calls
-    computeDowntime(computeDowntimeTestCases)
+    print(computeDowntime(computeDowntimeTestCases))
     
 
 def main():

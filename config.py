@@ -1,6 +1,6 @@
 # Define the period of interest
-quarterStart = '2022-01-01'
-quarterEnd = '2022-04-01'
+quarterStart = '2022-02-23'
+quarterEnd = '2022-02-24'
 
 # Site specific settings
 WAMs = 'Mukti'
