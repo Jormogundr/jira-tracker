@@ -56,9 +56,12 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
     timeCorrection = False
 
     # initialize the sum tracking accrued downtime to the difference between end and start in business seconds
-    # the bdate_range will always include the starting date, so we account for this by subtracting it 
     # holidays can be included as an argument to this function
-    deltaT = len(bdate_range(start, end, inclusive='neither')) * SITE_DAILY_OPERATING_SECONDS
+    # there's no elegant way to handle bounds inclusion on bdate ranges with a difference of 0 days -- thus the weird conditional
+    if abs(end - start).days > 0:
+        deltaT = len(bdate_range(start, end, inclusive='right')) * SITE_DAILY_OPERATING_SECONDS
+    else:
+        deltaT = 0
 
     # check if interval open/closing times are confined to site operating hours
     # TODO handle cases where endHour < config.open, and startHour > config.close
@@ -84,7 +87,7 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
     # at this point, scope of problem is reduced to finding difference at HOUR:MIN:SEC precision
     # end and start are both datetime objects and the minus sign is overloaded so that a datetime object results from the operation
     else:
-        diff = end - start
+        diff = abs(end - start)
         deltaT += diff.seconds
 
     return Timedelta(deltaT, unit='seconds')
@@ -189,13 +192,14 @@ def computeDowntime(intervals: list) -> int:
             previousVehicle = vehicle
             continue
 
-        # at this point, we have overlapping intervals that we want to accrue downtime for
+        # at this point, we have overlapping intervals that we want to accrue downtime for. 
+        # overlap is used to check for duplicate intervals -- it is not used to calculate downtime!
         overlap = [start, previousEnd]
 
         # if current interval's start value is less than previous interval's end, then intervals overlap, so downtime is accruing. Do NOT accrue downtime if the downtime interval has already been accounted for! The overlap interval is [start, min(previousEnd, end)]
-        # TODO: I think we need to remove this selected interval from the pool of intervals we are considering, otherwise we may not account for all downtime. 
         if start < previousEnd and overlap not in overlappingIntervals:
             overlappingIntervals.append(overlap)
+            # print(start, min(previousEnd, end), computeTimeDelta(start, min(previousEnd, end)))
             downTime += computeTimeDelta(start, min(previousEnd, end))
 
             # now we must decide which interval to keep for comparison - we ought to keep the overlapping interval with the greater end date. assign vehicle based on this determination
