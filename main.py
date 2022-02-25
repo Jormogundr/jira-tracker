@@ -38,6 +38,7 @@ Given the date range of interest, compute and return total time in seconds that 
 def computeTotalTime() -> int:
     start = config.quarterStart
     end = config.quarterEnd
+    # TODO: Why not use bdate_range() to avoid redundant imports?
     NUM_WEEKDAYS = busday_count(start, end)
     SECONDS_IN_BUSINESS_DAY = (config.close - config.open) * 3600
     return NUM_WEEKDAYS * SECONDS_IN_BUSINESS_DAY
@@ -55,33 +56,24 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
     SITE_DAILY_OPERATING_SECONDS = (config.close - config.open) * 3600
     timeCorrection = False
 
-    # initialize the sum tracking accrued downtime to the difference between end and start in business seconds
-    # holidays can be included as an argument to this function
+    # initialize the sum tracking accrued downtime to the difference in business DAYS between start and end, converted to seconds. 
+    # holidays can be included as an argument to bdate_range()
     # there's no elegant way to handle bounds inclusion on bdate ranges with a difference of 0 days -- thus the weird conditional
     if abs(end - start).days > 0:
         deltaT = len(bdate_range(start, end, inclusive='right')) * SITE_DAILY_OPERATING_SECONDS
     else:
         deltaT = 0
 
-    # check if interval open/closing times are confined to site operating hours
-    # TODO handle cases where endHour < config.open, and startHour > config.close
-    # TODO Seems like there's a simpler solution than this ugly block
-    startHour, endHour = start.hour, end.hour
-    if startHour < config.open:
-        startHour = 8
+    # check if interval open/closing times are confined to site operating hours, and re-assign hours as needed
+    if start.hour < config.open or start.hour > config.close:
+        start = end.replace(hour = 8, minute = 0, second = 0)
         timeCorrection = True
-    if startHour > config.close:
-        startHour = 20
-        timeCorrection = True
-    if endHour > config.close:
-        endHour = 20
-        timeCorrection = True
-    if endHour < config.open:
-        endHour = 8
+    if end.hour > config.close or end.hour  < config.open:
+        end = start.replace(hour = 20, minute = 0, second = 0)
         timeCorrection = True
 
     if timeCorrection:
-        deltaT += abs(endHour - startHour) * 3600 # convert difference in hours to seconds
+        deltaT += abs(end - start).total_seconds()
     
     # the passed datetime objects fall within normal operating hours for a given day
     # at this point, scope of problem is reduced to finding difference at HOUR:MIN:SEC precision
@@ -199,7 +191,7 @@ def computeDowntime(intervals: list) -> int:
         # if current interval's start value is less than previous interval's end, then intervals overlap, so downtime is accruing. Do NOT accrue downtime if the downtime interval has already been accounted for! The overlap interval is [start, min(previousEnd, end)]
         if start < previousEnd and overlap not in overlappingIntervals:
             overlappingIntervals.append(overlap)
-            # print(start, min(previousEnd, end), computeTimeDelta(start, min(previousEnd, end)))
+            print(start, min(previousEnd, end), computeTimeDelta(start, min(previousEnd, end)))
             downTime += computeTimeDelta(start, min(previousEnd, end))
 
             # now we must decide which interval to keep for comparison - we ought to keep the overlapping interval with the greater end date. assign vehicle based on this determination
