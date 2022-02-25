@@ -1,3 +1,0 @@
-serverName = ""
-email = ""
-jiraToken = ""
