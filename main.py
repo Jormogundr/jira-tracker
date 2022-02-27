@@ -13,7 +13,9 @@ TODO:
     - Add a function checkAutoReadiness() that clearly applies auto readiness condition logic so this program can be easily changed for changing definition in future. Currently all of that logic is in computeDowntime()
     - Write test cases for computeDowntime() to make sure it is working as expected.
     - Holidays? 
-
+    - Handle cases where Vehicle State Impact includes 'N/A'. This is the default option for fix on site. Maybe just make this a required field in Jira? Ask Graham.
+    - 'Auto readiness' definition will differ slightly be site. Account for this! See point 3. 
+    - Add a downtime visualizer? Might be nice. 
 """
 # ./bin/python3.8
 
@@ -54,35 +56,26 @@ The order of operations here are:
 """
 def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
     SITE_DAILY_OPERATING_SECONDS = (config.close - config.open) * 3600
-    timeCorrection = False
-
-    # initialize the sum tracking accrued downtime to the difference in business DAYS between start and end, converted to seconds. 
-    # holidays can be included as an argument to bdate_range()
-    # there's no elegant way to handle bounds inclusion on bdate ranges with a difference of 0 days -- thus the weird conditional
-    if abs(end - start).days > 0:
-        deltaT = len(bdate_range(start, end, inclusive='right')) * SITE_DAILY_OPERATING_SECONDS
-    else:
-        deltaT = 0
 
     # check if interval open/closing times are confined to site operating hours, and re-assign hours as needed
     if start.hour < config.open or start.hour > config.close:
         start = end.replace(hour = 8, minute = 0, second = 0)
-        timeCorrection = True
     if end.hour > config.close or end.hour  < config.open:
         end = start.replace(hour = 20, minute = 0, second = 0)
-        timeCorrection = True
 
-    if timeCorrection:
-        deltaT += abs(end - start).total_seconds()
-    
-    # the passed datetime objects fall within normal operating hours for a given day
-    # at this point, scope of problem is reduced to finding difference at HOUR:MIN:SEC precision
-    # end and start are both datetime objects and the minus sign is overloaded so that a datetime object results from the operation
+    endTimeInSeconds = end.hour * 3600 + end.minute*60 + end.second
+    startTimeInSeconds = start.hour * 3600 + start.minute*60 + start.second
+    diff = len(bdate_range(start, end, inclusive='neither')) * SITE_DAILY_OPERATING_SECONDS
+
+    # if the end time is greater than the start time, just subtract them
+    if endTimeInSeconds > startTimeInSeconds:
+        diff += endTimeInSeconds - startTimeInSeconds
+        return Timedelta(diff, unit='seconds')
+    # otherwise... the math is slightly more complicated, but way more annoying to read. diff += |site close - start time| + |site open - end time|, where end time < start time. Note start and end time have been coerced into times between hours of operation at this point in the function
     else:
-        diff = abs(end - start)
-        deltaT += diff.seconds
+        diff += (abs(end.replace(day = start.day, hour = config.close, minute = 0, second = 0) - start) + abs((end.replace(day = end.day, hour = config.open, minute = 0, second = 0) - end))).total_seconds()
+        return Timedelta(diff, unit='seconds')
 
-    return Timedelta(deltaT, unit='seconds')
 
 """
 Given a date as a string in the form 'YYYY-MM-DD', or a string in the date time format used by Jira (e.g. '2022-01-14T13:25:07.139-0500'), convert the string to a pandas datetime object and strip any possible timezone information. Return the pandas datetime object.
@@ -117,7 +110,7 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
             # if history item changes Vehicle State Impact and change was made within period of interest
             if vehicleImpact.field == 'Vehicle State Impact' and changeDate > startDatetime and changeDate < endDatetime:
 
-                # if ticket was created in non-auto ready state -- vehicle impact only changed to monitor from grounded or manual only. The inequality conditions check that we are only adding downtime for non-auto changes within the period of interest.
+                # if ticket was created in non-auto ready state -- vehicle impact only changed to monitor from grounded or manual only
                 if vehicleImpact.toString == 'Monitor' and initialCondition == True:
                     initialCondition = False
 
@@ -159,7 +152,7 @@ def computeDowntime(intervals: list) -> int:
     overlappingIntervals = [] # keep track of overlapping intervals to avoid counting identical intervals
     SECONDS_IN_DAY = 86400
 
-    # check if first vehicle in list is WAMs and as downtime as needed
+    # check if first vehicle in list is WAMs and add downtime as needed
     if intervals[0][2] == config.WAMs:
         downTime += computeTimeDelta(intervals[0][0], intervals[0][1])
 
@@ -178,12 +171,6 @@ def computeDowntime(intervals: list) -> int:
         if previousVehicle == config.WAMs:
             continue
 
-        # we're only interested in tracking downtime for two or more unique lexus vehicles
-        if vehicle == previousVehicle:
-            previousEnd = end
-            previousVehicle = vehicle
-            continue
-
         # at this point, we have overlapping intervals that we want to accrue downtime for. 
         # overlap is used to check for duplicate intervals -- it is not used to calculate downtime!
         overlap = [start, previousEnd]
@@ -192,13 +179,17 @@ def computeDowntime(intervals: list) -> int:
         if start < previousEnd and overlap not in overlappingIntervals:
             overlappingIntervals.append(overlap)
             print(start, min(previousEnd, end), computeTimeDelta(start, min(previousEnd, end)))
-            downTime += computeTimeDelta(start, min(previousEnd, end))
 
-            # now we must decide which interval to keep for comparison - we ought to keep the overlapping interval with the greater end date. assign vehicle based on this determination
-            previousEnd = max(end, previousEnd)
-            if previousEnd == end:
-                previousVehicle = vehicle
+            if vehicle != previousVehicle:
+                downTime += computeTimeDelta(start, min(previousEnd, end))
 
+        # now we must decide which interval to keep for comparison - we ought to keep the overlapping interval with the greater end date. assign vehicle based on this determination
+        previousEnd = max(end, previousEnd)
+
+        # if the larger datetime is the same as the current interval end datetime, update previous vehicle to current vehicle
+        if previousEnd == end:
+            previousVehicle = vehicle
+                
     return downTime.seconds + downTime.days * SECONDS_IN_DAY
 
 """
@@ -228,14 +219,81 @@ def tests():
 
     # function calls
     print(computeDowntime(computeDowntimeTestCases))
+
+"""
+At the time of writing this program, the Jira API GET methods are limited to a maximum of 100 results per call, so a workaround like this is necessary to collect all issues related to the JQL for the site in cases where the number of issues exceeds 100. 
+INPUT: a Jira server instance, defined in the main function
+OUTPUT: a list of jira issues that results from a JQL search defined by config.query
+"""
+def getRelatedIssues(jira: JIRA) -> list:
+    numResults = 100
+    relatedIssues = jira.search_issues(jql_str=config.query, maxResults = numResults, startAt = 0)
+    idx = numResults
+
+    while True:
+        if len(relatedIssues) % numResults == 0:
+            relatedIssues += jira.search_issues(jql_str=config.query, maxResults = numResults, startAt = idx)
+            idx += numResults
+        else:
+            break
     
+    return relatedIssues
+
+# This is just here to speed of debugging. This is the output for ARB.
+def REMOVE_ME():
+    return [
+        [Timestamp('2022-01-01 00:00:00'), Timestamp('2022-01-03 16:31:21.708000'), 'Mayble'],
+
+        [Timestamp('2022-01-03 11:52:07.381000'), Timestamp('2022-01-03 14:52:04.727000'), 'Mayble'],
+
+        [Timestamp('2022-01-11 08:38:35.534000'), Timestamp('2022-01-13 15:52:35.505000'), 'Mayble'],
+
+        [Timestamp('2022-01-12 14:30:26.175000'), Timestamp('2022-01-13 09:16:28.276000'), 'Mitzi'],
+
+        [Timestamp('2022-01-17 14:36:08.064000'), Timestamp('2022-01-17 17:07:54.981000'), 'Momo'],
+
+        [Timestamp('2022-01-17 16:38:00.411000'), Timestamp('2022-02-07 12:37:43.135000'), 'Mitzi'],
+
+        [Timestamp('2022-01-18 13:42:17.050000'), Timestamp('2022-01-19 07:03:14.678000'), 'Marinara'],
+
+        [Timestamp('2022-01-18 14:02:59.456000'), Timestamp('2022-01-25 17:07:55.945000'), 'Momo'],
+
+        [Timestamp('2022-01-21 11:04:32.268000'), Timestamp('2022-01-21 11:04:35.102000'), 'Momo'],
+
+        [Timestamp('2022-01-21 13:59:41.172000'), Timestamp('2022-01-24 08:19:28.133000'), 'Momo'],
+
+        [Timestamp('2022-01-24 09:51:54.821000'), Timestamp('2022-01-25 10:07:37.318000'), 'Momo'],
+
+        [Timestamp('2022-01-28 13:49:44.931000'), Timestamp('2022-01-31 09:58:03.622000'), 'Mayble'],
+
+        [Timestamp('2022-02-04 11:28:12.275000'), Timestamp('2022-02-09 17:47:20.283000'), 'Momo'],
+
+        [Timestamp('2022-02-07 08:33:55.161000'), Timestamp('2022-02-07 14:01:42.802000'), 'Momo'],
+
+        [Timestamp('2022-02-09 10:58:39.654000'), Timestamp('2022-02-09 13:37:28.092000'), 'Mukti'],
+
+        [Timestamp('2022-02-11 18:36:42.894000'), Timestamp('2022-02-11 18:39:15.593000'), 'Momo'],
+
+        [Timestamp('2022-02-12 10:45:30.426000'), Timestamp('2022-02-12 10:45:40.793000'), 'Momo'],
+
+        [Timestamp('2022-02-12 11:50:55.447000'), Timestamp('2022-02-12 11:51:00.604000'), 'Momo'],
+
+        [Timestamp('2022-02-16 08:47:54.104000'), Timestamp('2022-02-16 08:47:55.895000'), 'Momo'],
+
+        [Timestamp('2022-02-16 10:13:10.291000'), Timestamp('2022-02-16 10:13:11.424000'), 'Momo'],
+
+        [Timestamp('2022-02-21 08:43:42.890000'), Timestamp('2022-02-22 15:13:38.567000'), 'Momo'],
+
+        [Timestamp('2022-02-23 13:42:33.825000'), Timestamp('2022-02-23 13:42:36.632000'), 'Mukti']
+    ]
 
 def main():
     # tests()
     dateTimeRange =  [createDatetimeObject(config.quarterStart), createDatetimeObject(config.quarterEnd)]
     jira = createServerInstance()
-    relatedIssues = jira.search_issues(jql_str=config.query)[::-1]
+    relatedIssues = getRelatedIssues(jira)
     intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
+    # intervals = REMOVE_ME()
     downtime = computeDowntime(intervals)
     autoReadyPercent = computeAutoReadyPercent(downtime)
     print("Auto readiness is {0}".format(autoReadyPercent))
