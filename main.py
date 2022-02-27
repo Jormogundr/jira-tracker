@@ -16,6 +16,7 @@ TODO:
     - Handle cases where Vehicle State Impact includes 'N/A'. This is the default option for fix on site. Maybe just make this a required field in Jira? Ask Graham.
     - 'Auto readiness' definition will differ slightly be site. Account for this! See point 3. 
     - Add a downtime visualizer? Might be nice. 
+    - Clean up. Good lord.
 """
 # ./bin/python3.8
 
@@ -289,11 +290,11 @@ def REMOVE_ME():
 
 def main():
     # tests()
-    dateTimeRange =  [createDatetimeObject(config.quarterStart), createDatetimeObject(config.quarterEnd)]
-    jira = createServerInstance()
-    relatedIssues = getRelatedIssues(jira)
-    intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
-    # intervals = REMOVE_ME()
+    # dateTimeRange =  [createDatetimeObject(config.quarterStart), createDatetimeObject(config.quarterEnd)]
+    # jira = createServerInstance()
+    # relatedIssues = getRelatedIssues(jira)
+    # intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
+    intervals = REMOVE_ME()
     downtime = computeDowntime(intervals)
     autoReadyPercent = computeAutoReadyPercent(downtime)
     print("Auto readiness is {0}".format(autoReadyPercent))
