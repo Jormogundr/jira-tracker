@@ -189,8 +189,12 @@ def computeDowntime(intervals: list) -> int:
         if vehicle == config.WAMs:
             deltaT = computeTimeDelta(start, end)
             downTime += deltaT
-            previousEnd = end
-            previousVehicle = vehicle
+            previousEnd = max(end, previousEnd)
+
+            # update previous vehicle to the interval with greater end date, if needed
+            if previousEnd == end:
+                previousVehicle = vehicle
+
             continue
         
         # we do not want to double count WAMs down time! do not compare it to other downtime intervals.
@@ -267,61 +271,50 @@ def getRelatedIssues(jira: JIRA) -> list:
     
     return relatedIssues
 
-# This is just here to speed of debugging. This is the output for ARB.
+# This is just here to speed up debugging. This is the output for ARB.
 def REMOVE_ME():
     return [
-        [Timestamp('2022-01-01 00:00:00'), Timestamp('2022-01-03 16:31:21.708000'), 'Mayble'],
-
-        [Timestamp('2022-01-03 11:52:07.381000'), Timestamp('2022-01-03 14:52:04.727000'), 'Mayble'],
-
-        [Timestamp('2022-01-11 08:38:35.534000'), Timestamp('2022-01-13 15:52:35.505000'), 'Mayble'],
-
-        [Timestamp('2022-01-12 14:30:26.175000'), Timestamp('2022-01-13 09:16:28.276000'), 'Mitzi'],
-
-        [Timestamp('2022-01-17 14:36:08.064000'), Timestamp('2022-01-17 17:07:54.981000'), 'Momo'],
-
-        [Timestamp('2022-01-17 16:38:00.411000'), Timestamp('2022-02-07 12:37:43.135000'), 'Mitzi'],
-
-        [Timestamp('2022-01-18 13:42:17.050000'), Timestamp('2022-01-19 07:03:14.678000'), 'Marinara'],
-
-        [Timestamp('2022-01-18 14:02:59.456000'), Timestamp('2022-01-25 17:07:55.945000'), 'Momo'],
-
-        [Timestamp('2022-01-21 11:04:32.268000'), Timestamp('2022-01-21 11:04:35.102000'), 'Momo'],
-
-        [Timestamp('2022-01-21 13:59:41.172000'), Timestamp('2022-01-24 08:19:28.133000'), 'Momo'],
-
-        [Timestamp('2022-01-24 09:51:54.821000'), Timestamp('2022-01-25 10:07:37.318000'), 'Momo'],
-
-        [Timestamp('2022-01-28 13:49:44.931000'), Timestamp('2022-01-31 09:58:03.622000'), 'Mayble'],
-
-        [Timestamp('2022-02-04 11:28:12.275000'), Timestamp('2022-02-09 17:47:20.283000'), 'Momo'],
-
-        [Timestamp('2022-02-07 08:33:55.161000'), Timestamp('2022-02-07 14:01:42.802000'), 'Momo'],
-
-        [Timestamp('2022-02-09 10:58:39.654000'), Timestamp('2022-02-09 13:37:28.092000'), 'Mukti'],
-
-        [Timestamp('2022-02-11 18:36:42.894000'), Timestamp('2022-02-11 18:39:15.593000'), 'Momo'],
-
-        [Timestamp('2022-02-12 10:45:30.426000'), Timestamp('2022-02-12 10:45:40.793000'), 'Momo'],
-
-        [Timestamp('2022-02-12 11:50:55.447000'), Timestamp('2022-02-12 11:51:00.604000'), 'Momo'],
-
-        [Timestamp('2022-02-16 08:47:54.104000'), Timestamp('2022-02-16 08:47:55.895000'), 'Momo'],
-
-        [Timestamp('2022-02-16 10:13:10.291000'), Timestamp('2022-02-16 10:13:11.424000'), 'Momo'],
-
-        [Timestamp('2022-02-21 08:43:42.890000'), Timestamp('2022-02-22 15:13:38.567000'), 'Momo'],
-
-        [Timestamp('2022-02-23 13:42:33.825000'), Timestamp('2022-02-23 13:42:36.632000'), 'Mukti']
+        [Timestamp('2022-03-01 09:55:17.307000'), Timestamp('2022-03-02 09:24:56.584000'), 'Mayble'] ,
+        [Timestamp('2022-02-28 08:04:51.299000'), Timestamp('2022-03-02 08:47:37.482000'), 'Mukti'] ,
+        [Timestamp('2022-02-23 13:42:33.825000'), Timestamp('2022-02-23 13:42:36.632000'), 'Mukti'] ,
+        [Timestamp('2022-02-21 08:43:42.890000'), Timestamp('2022-02-22 15:13:38.567000'), 'Momo'] ,
+        [Timestamp('2022-02-18 08:18:20.358000'), Timestamp('2022-02-18 08:44:09.452000'), 'Mitzi'] ,
+        [Timestamp('2022-02-11 18:36:42.894000'), Timestamp('2022-02-11 18:39:15.593000'), 'Momo'] ,
+        [Timestamp('2022-02-12 11:50:55.447000'), Timestamp('2022-02-12 11:51:00.604000'), 'Momo'] ,
+        [Timestamp('2022-02-12 10:45:30.426000'), Timestamp('2022-02-12 10:45:40.793000'), 'Momo'] ,
+        [Timestamp('2022-02-09 10:58:39.654000'), Timestamp('2022-02-09 13:37:28.092000'), 'Mukti'] ,
+        [Timestamp('2022-02-16 10:13:10.291000'), Timestamp('2022-02-16 10:13:11.424000'), 'Momo'] ,
+        [Timestamp('2022-02-04 11:28:12.275000'), Timestamp('2022-02-09 17:47:20.283000'), 'Momo'] ,
+        [Timestamp('2022-01-28 13:49:44.931000'), Timestamp('2022-01-31 09:58:03.622000'), 'Mayble'] ,
+        [Timestamp('2022-01-21 11:04:32.268000'), Timestamp('2022-01-21 11:04:35.102000'), 'Momo'] ,
+        [Timestamp('2022-01-21 13:59:41.172000'), Timestamp('2022-01-24 08:19:28.133000'), 'Momo'] ,
+        [Timestamp('2022-01-24 09:51:54.821000'), Timestamp('2022-01-25 10:07:37.318000'), 'Momo'] ,
+        [Timestamp('2022-02-07 08:33:55.161000'), Timestamp('2022-02-07 14:01:42.802000'), 'Momo'] ,
+        [Timestamp('2022-01-20 13:49:06.280000'), Timestamp('2022-02-03 14:08:47.930000'), 'Momo'] ,
+        [Timestamp('2022-01-18 14:02:59.456000'), Timestamp('2022-01-25 17:07:55.945000'), 'Momo'] ,
+        [Timestamp('2022-01-18 13:42:17.050000'), Timestamp('2022-01-19 07:03:14.678000'), 'Marinara'] ,
+        [Timestamp('2022-01-17 16:38:00.411000'), Timestamp('2022-02-07 12:37:43.135000'), 'Mitzi'] ,
+        [Timestamp('2022-01-17 14:36:08.064000'), Timestamp('2022-01-17 17:07:54.981000'), 'Momo'] ,
+        [Timestamp('2022-01-17 11:01:31.158000'), Timestamp('2022-01-17 11:01:35.034000'), 'Mayble'] ,
+        [Timestamp('2022-01-07 16:01:12.649000'), Timestamp('2022-01-11 14:32:27.955000'), 'Momo'] ,
+        [Timestamp('2022-01-05 13:18:04.651000'), Timestamp('2022-01-06 08:28:30.553000'), 'Mukti'] ,
+        [Timestamp('2022-01-04 11:20:15.492000'), Timestamp('2022-01-06 11:10:21.366000'), 'Momo'] ,
+        [Timestamp('2022-01-11 08:38:35.534000'), Timestamp('2022-01-13 15:52:35.505000'), 'Mayble'] ,
+        [Timestamp('2022-01-04 07:35:44.991000'), Timestamp('2022-01-07 07:36:29.269000'), 'Makeba'] ,
+        [Timestamp('2022-01-03 11:52:07.381000'), Timestamp('2022-01-03 14:52:04.727000'), 'Mayble'] ,
+        [Timestamp('2022-01-01 00:00:00'), Timestamp('2022-01-07 12:13:30.680000'), 'Momo'] ,
+        [Timestamp('2022-01-01 00:00:00'), Timestamp('2022-01-03 16:31:21.708000'), 'Mayble'] ,
+        [Timestamp('2022-02-16 08:47:54.104000'), Timestamp('2022-02-16 08:47:55.895000'), 'Momo'] ,
+        [Timestamp('2022-01-12 14:30:26.175000'), Timestamp('2022-01-13 09:16:28.276000'), 'Mitzi'] 
     ]
 
 def main():
     # tests()
-    dateTimeRange =  [to_datetime(config.quarterStart).tz_localize(None), to_datetime(config.quarterEnd).tz_localize(None)]
-    jira = createServerInstance()
-    relatedIssues = getRelatedIssues(jira)
-    intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
-    #intervals = REMOVE_ME()
+    # dateTimeRange =  [to_datetime(config.quarterStart).tz_localize(None), to_datetime(config.quarterEnd).tz_localize(None)]
+    # jira = createServerInstance()
+    # relatedIssues = getRelatedIssues(jira)
+    # intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
+    intervals = REMOVE_ME()
     downtime = computeDowntime(intervals)
     autoReadyPercent = computeAutoReadyPercent(downtime)
     print("Auto readiness is {0}".format(autoReadyPercent))
