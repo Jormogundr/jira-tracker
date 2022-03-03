@@ -21,6 +21,7 @@ TODO:
 """
 # ./bin/python3.8
 
+from xmlrpc.client import DateTime
 from jira import JIRA
 from pandas import Timedelta, to_datetime, bdate_range, Timestamp
 from numpy import busday_count
@@ -80,10 +81,20 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
 
 
 """
-Given a date as a string in the form 'YYYY-MM-DD', or a string in the date time format used by Jira (e.g. '2022-01-14T13:25:07.139-0500'), convert the string to a pandas datetime object and strip any possible timezone information. Return the pandas datetime object.
+Given a date as a string in the form 'YYYY-MM-DD', or a string in the date time format used by Jira (e.g. '2022-01-14T13:25:07.139-0500'), convert the string to a pandas datetime object and strip any possible timezone information. If needed is, coerce downtime interval start and end datetime bounds to conform to the period of time we are interested in. 
+
+e.g, if we are looking at the first quarter of the year, and downtime accrued prior to and through the new year, we would not want to count the downtime prior to the new year, only the time from the interval [YYYY-01-01 00:00:00, time vehicle was fixed]. 
+
+INPUT: A pandas timestamp object, and a string passed to the function that indicates if the datetime is the 'open' (start) or 'close' (end) of an interval.
+OUTPUT: a pandas datetime object.
 """
-def createDatetimeObject(date: str) -> Timestamp:
-    return to_datetime(date).tz_localize(None)
+def createDatetimeObject(date: str, bound: str) -> Timestamp:
+    datetime = to_datetime(date).tz_localize(None)
+    if type == 'start' and datetime < config.quarterStart:
+        datetime = config.quarterStart
+    if type == 'end' and datetime > config.quarterEnd:
+        datetime = config.quarterEnd
+    return datetime
 
 """
 INPUT: 
@@ -102,12 +113,12 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
         # fetch the history for a particular issue using the issue key (ex. 'AA-598'). The slicing ensures the history is in ascending datetime order
         changelog = jira.issue(id=issue.id, expand='changelog').changelog.histories[::-1]
         initialCondition = True # used to track if ticket was created in non-auto ready state
-        initialDate = createDatetimeObject(issue.fields.created)
+        initialDate = createDatetimeObject(issue.fields.created, 'start')
         vehicle = issue.fields.customfield_10068[0].capitalize()
 
         for i, change in enumerate(changelog):
             vehicleImpact = changelog[i].items[0]
-            changeDate = createDatetimeObject(change.created)
+            changeDate = createDatetimeObject(change.created, 'start')
 
             # if history item changes Vehicle State Impact and change was made within period of interest
             if vehicleImpact.field == 'Vehicle State Impact' and changeDate > startDatetime and changeDate < endDatetime:
@@ -137,8 +148,8 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
         # at this point we have checked the whole history of a particular vehicle for a change in state. Now check if car was created and closed in non-auto ready state, and if so, add to fleetInterval
         vehicleImpact = issue.fields.customfield_10064.value
         if vehicleImpact in config.nonAutoStates:
-            downDate = changelog[0].created
-            upDate = changelog[-1].created
+            upDate = createDatetimeObject(changelog[-1].created, 'end')
+            downDate = createDatetimeObject(changelog[0].created, 'end')
             fleetIntervals.append([initialDate, downDate, vehicle])
             print(issue.key, "\t", vehicle, "\t", downDate, "\t", upDate)
 
@@ -301,7 +312,7 @@ def REMOVE_ME():
 
 def main():
     # tests()
-    dateTimeRange =  [createDatetimeObject(config.quarterStart), createDatetimeObject(config.quarterEnd)]
+    dateTimeRange =  [to_datetime(config.quarterStart).tz_localize(None), to_datetime(config.quarterEnd).tz_localize(None)]
     jira = createServerInstance()
     relatedIssues = getRelatedIssues(jira)
     intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
