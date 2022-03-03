@@ -90,10 +90,13 @@ OUTPUT: a pandas datetime object.
 """
 def createDatetimeObject(date: str, bound: str) -> Timestamp:
     datetime = to_datetime(date).tz_localize(None)
-    if type == 'start' and datetime < config.quarterStart:
-        datetime = config.quarterStart
-    if type == 'end' and datetime > config.quarterEnd:
-        datetime = config.quarterEnd
+    open = to_datetime(config.quarterStart).tz_localize(None)
+    close = to_datetime(config.quarterEnd).tz_localize(None)
+    
+    if bound == 'start' and datetime < open:
+        datetime = open
+    if bound == 'end' and datetime > close:
+        datetime = close
     return datetime
 
 """
@@ -109,6 +112,8 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
     fleetIntervals = []
 
     for issue in relatedIssues:
+        if issue.key == 'AA-478':
+            print()
 
         # fetch the history for a particular issue using the issue key (ex. 'AA-598'). The slicing ensures the history is in ascending datetime order
         changelog = jira.issue(id=issue.id, expand='changelog').changelog.histories[::-1]
@@ -118,7 +123,7 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
 
         for i, change in enumerate(changelog):
             vehicleImpact = changelog[i].items[0]
-            changeDate = createDatetimeObject(change.created, 'start')
+            changeDate = createDatetimeObject(change.created, 'end')
 
             # if history item changes Vehicle State Impact and change was made within period of interest
             if vehicleImpact.field == 'Vehicle State Impact' and changeDate > startDatetime and changeDate < endDatetime:
@@ -149,8 +154,8 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
         vehicleImpact = issue.fields.customfield_10064.value
         if vehicleImpact in config.nonAutoStates:
             upDate = createDatetimeObject(changelog[-1].created, 'end')
-            downDate = createDatetimeObject(changelog[0].created, 'end')
-            fleetIntervals.append([initialDate, downDate, vehicle])
+            downDate = createDatetimeObject(changelog[0].created, 'start')
+            fleetIntervals.append([downDate, upDate, vehicle])
             print(issue.key, "\t", vehicle, "\t", downDate, "\t", upDate)
 
     return fleetIntervals
