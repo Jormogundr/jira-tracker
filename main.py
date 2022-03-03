@@ -8,6 +8,7 @@ Uptime is defined as having no more than one Lexus in a non-auto ready state (ma
 
 
 TODO: 
+    - Handle cases where the ticket is opened in non-auto state and does NOT change state before being closed!
     - Identify those tickets which most severely impact auto-readiness.
     - What about if/when a vehicle is non-auto ready for the WHOLE quarter...?
     - Add a function checkAutoReadiness() that clearly applies auto readiness condition logic so this program can be easily changed for changing definition in future. Currently all of that logic is in computeDowntime()
@@ -102,11 +103,11 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
         changelog = jira.issue(id=issue.id, expand='changelog').changelog.histories[::-1]
         initialCondition = True # used to track if ticket was created in non-auto ready state
         initialDate = createDatetimeObject(issue.fields.created)
+        vehicle = issue.fields.customfield_10068[0].capitalize()
 
         for i, change in enumerate(changelog):
             vehicleImpact = changelog[i].items[0]
             changeDate = createDatetimeObject(change.created)
-            vehicle = issue.fields.customfield_10068[0].capitalize()
 
             # if history item changes Vehicle State Impact and change was made within period of interest
             if vehicleImpact.field == 'Vehicle State Impact' and changeDate > startDatetime and changeDate < endDatetime:
@@ -132,6 +133,14 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
                 if (vehicleImpact.toString == 'Monitor'):
                     fleetIntervals.append([downDate, changeDate, vehicle])
                     print(issue.key, "\t", vehicle, "\t", downDate, "\t", changeDate)
+
+        # at this point we have checked the whole history of a particular vehicle for a change in state. Now check if car was created and closed in non-auto ready state, and if so, add to fleetInterval
+        vehicleImpact = issue.fields.customfield_10064.value
+        if vehicleImpact in config.nonAutoStates:
+            downDate = changelog[0].created
+            upDate = changelog[-1].created
+            fleetIntervals.append([initialDate, downDate, vehicle])
+            print(issue.key, "\t", vehicle, "\t", downDate, "\t", upDate)
 
     return fleetIntervals
 
@@ -231,6 +240,8 @@ def getRelatedIssues(jira: JIRA) -> list:
     relatedIssues = jira.search_issues(jql_str=config.query, maxResults = numResults, startAt = 0)
     idx = numResults
 
+    
+    # TODO: Maybe only collect fields that are pertinent to the work done by this program
     while True:
         if len(relatedIssues) % numResults == 0:
             relatedIssues += jira.search_issues(jql_str=config.query, maxResults = numResults, startAt = idx)
@@ -290,11 +301,11 @@ def REMOVE_ME():
 
 def main():
     # tests()
-    # dateTimeRange =  [createDatetimeObject(config.quarterStart), createDatetimeObject(config.quarterEnd)]
-    # jira = createServerInstance()
-    # relatedIssues = getRelatedIssues(jira)
-    # intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
-    intervals = REMOVE_ME()
+    dateTimeRange =  [createDatetimeObject(config.quarterStart), createDatetimeObject(config.quarterEnd)]
+    jira = createServerInstance()
+    relatedIssues = getRelatedIssues(jira)
+    intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
+    #intervals = REMOVE_ME()
     downtime = computeDowntime(intervals)
     autoReadyPercent = computeAutoReadyPercent(downtime)
     print("Auto readiness is {0}".format(autoReadyPercent))
