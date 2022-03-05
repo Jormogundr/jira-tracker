@@ -21,7 +21,6 @@ TODO:
 """
 # ./bin/python3.8
 
-from xmlrpc.client import DateTime
 from jira import JIRA
 from pandas import Timedelta, to_datetime, bdate_range, Timestamp
 from numpy import busday_count
@@ -86,13 +85,21 @@ Given a date as a string in the form 'YYYY-MM-DD', or a string in the date time 
 e.g, if we are looking at the first quarter of the year, and downtime accrued prior to and through the new year, we would not want to count the downtime prior to the new year, only the time from the interval [YYYY-01-01 00:00:00, time vehicle was fixed]. 
 
 INPUT: A pandas timestamp object, and a string passed to the function that indicates if the datetime is the 'open' (start) or 'close' (end) of an interval.
-OUTPUT: a pandas datetime object.
+OUTPUT: a pandas datetime object 
 """
 def createDatetimeObject(date: str, bound: str) -> Timestamp:
     datetime = to_datetime(date).tz_localize(None)
     open = to_datetime(config.quarterStart).tz_localize(None)
     close = to_datetime(config.quarterEnd).tz_localize(None)
-    
+
+    # check for invalid datetimes, i.e. when a ticket is closed prior to period of interest but gets 'updated' with a comment WITHIN the period of interest
+    # returning either bound of the period of interest should result in identical intervals i.e. [start, start] so no downtime would accrue for these tickets
+    if bound == 'end' and datetime < open:
+        return open
+    if bound == 'start' and datetime > close:
+        return close 
+
+    # check for valid datetimes but check if they need to be corrected
     if bound == 'start' and datetime < open:
         datetime = open
     if bound == 'end' and datetime > close:
@@ -112,8 +119,6 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
     fleetIntervals = []
 
     for issue in relatedIssues:
-        if issue.key == 'AA-478':
-            print()
 
         # fetch the history for a particular issue using the issue key (ex. 'AA-598'). The slicing ensures the history is in ascending datetime order
         changelog = jira.issue(id=issue.id, expand='changelog').changelog.histories[::-1]
@@ -310,11 +315,11 @@ def REMOVE_ME():
 
 def main():
     # tests()
-    # dateTimeRange =  [to_datetime(config.quarterStart).tz_localize(None), to_datetime(config.quarterEnd).tz_localize(None)]
-    # jira = createServerInstance()
-    # relatedIssues = getRelatedIssues(jira)
-    # intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
-    intervals = REMOVE_ME()
+    dateTimeRange =  [to_datetime(config.quarterStart).tz_localize(None), to_datetime(config.quarterEnd).tz_localize(None)]
+    jira = createServerInstance()
+    relatedIssues = getRelatedIssues(jira)
+    intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
+    #intervals = REMOVE_ME()
     downtime = computeDowntime(intervals)
     autoReadyPercent = computeAutoReadyPercent(downtime)
     print("Auto readiness is {0}".format(autoReadyPercent))
