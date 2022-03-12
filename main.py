@@ -23,8 +23,8 @@ from jira import JIRA
 from pandas import Timedelta, to_datetime, bdate_range, Timestamp
 from numpy import busday_count
 
-import config
-import jiraConfig
+import config.config as config
+import config.jiraConfig as jiraConfig
 
 """
 Returns a Jira class generated from the jira config info.
@@ -282,14 +282,6 @@ def getRelatedIssues(jira: JIRA) -> list:
             idx += numResults
         if not issues:
             return relatedIssues
-    
-
-""" This is just here to speed up debugging. 
-TODO: Remove when confident program is functioning correctly.
-"""
-def REMOVE_ME():
-    return [
-    ]
 
 def main():
     dateTimeRange =  [to_datetime(config.quarterStart).tz_localize(None), to_datetime(config.quarterEnd).tz_localize(None)]
