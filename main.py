@@ -6,15 +6,16 @@ Uptime is defined as having no more than one Lexus in a non-auto ready state (ma
 
 100% auto readiness therefore is limited to two cases: where the whole fleet is auto ready, or where only one Lexus is NOT auto ready.
 
-
 TODO: 
     - Handle cases where the ticket is opened in non-auto state and does NOT change state before being closed!
     - Identify those tickets which most severely impact auto-readiness, i.e. has the greatest downtime (could be as simple as finding top 5 elems in sorted list)
-    - What about if/when a vehicle is non-auto ready for the WHOLE quarter and never changed in the ticket?
     - Add a function checkAutoReadiness() that clearly applies auto readiness condition logic so this program can be easily changed for changing definition in future. Currently all of that logic is in computeDowntime
     - Handle cases where Vehicle State Impact includes 'N/A'. This is the default option for fix on site. Maybe just make this a required field in Jira? Ask Graham.
     - 'Auto readiness' definition will differ slightly be site. Account for this! See point 3. 
     - Add a downtime visualizer? Might be nice. 
+    - Add relevant downtime tickets to a dataframe, and allow user to have option to output content to a csv or similar
+    - Add support to run directly from linux cli
+    - Make terminal output less poopy
 """
 # ./bin/python3.8
 
@@ -130,6 +131,8 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
     startDatetime, endDatetime = dateTimeRange[0], dateTimeRange[1]
     downtimeIntervals = []
 
+    print("Generating downtime intervals...")
+
     for issue in relatedIssues:
 
         # fetch the history for a particular issue using the issue key (ex. 'AA-598'). The slicing ensures the history is in ascending datetime order
@@ -201,6 +204,8 @@ def computeDowntime(intervals: list) -> int:
     overlappingIntervals = []
     SECONDS_IN_DAY = 86400
 
+    print("Computing site auto readiness...")
+
     # check if first vehicle in list is WAMs and add downtime as needed
     if intervals[0][2] == config.WAMs:
         downTime += computeTimeDelta(intervals[0][0], intervals[0][1])
@@ -267,16 +272,17 @@ def getRelatedIssues(jira: JIRA) -> list:
     numResults = 100
     relatedIssues = jira.search_issues(jql_str=config.query, maxResults = numResults, startAt = 0)
     idx = numResults
+
+    print("Fetching relevant JIRA tickets for site {0}".format(config.site))
     
-    # TODO: Maybe only collect fields that are pertinent to the work done by this program
     while True:
         if len(relatedIssues) % numResults == 0:
-            relatedIssues += jira.search_issues(jql_str=config.query, maxResults = numResults, startAt = idx)
+            issues = jira.search_issues(jql_str=config.query, maxResults = numResults, startAt = idx)
+            relatedIssues += issues
             idx += numResults
-        else:
-            break
+        if not issues:
+            return relatedIssues
     
-    return relatedIssues
 
 """ This is just here to speed up debugging. 
 TODO: Remove when confident program is functioning correctly.
