@@ -2,6 +2,8 @@
 
 This tool is meant to be a metric generator for sites to use to track auto readiness, as part of the larger goal of achieving driver out readiness by the end of the year. It is still a WIP, as some additional features are planned to be added yet (see TODO in main file) and (most assuredly) bugs still exist.
 
+As a disclaimer, the tool is only as good as each site's ability to update Jira tickets in a timely and accurate manner. Vehicle down (manual, grounded) states are hot ticket items, and the TSE team does a good job of monitoring these tickets -- but lots of accountability rests on each site tech, support staff, and site staff to keep on updating their fleet health through Jira. 
+
 # Solution
 
 First, we must define auto-readiness. This may vary from site to site. The development of this application was driven specifically with the Ann Arbor site in mind, but the config allows use across sites and fleets. For the ARB site, one hundred percent auto-readiness is no more than one Lexus vehicle down, and the GEM must not be down. Down is manual only or grounded. 
