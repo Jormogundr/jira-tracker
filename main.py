@@ -9,15 +9,12 @@ Uptime is defined as having no more than one Lexus in a non-auto ready state (ma
 
 TODO: 
     - Handle cases where the ticket is opened in non-auto state and does NOT change state before being closed!
-    - Identify those tickets which most severely impact auto-readiness.
-    - What about if/when a vehicle is non-auto ready for the WHOLE quarter...?
-    - Add a function checkAutoReadiness() that clearly applies auto readiness condition logic so this program can be easily changed for changing definition in future. Currently all of that logic is in computeDowntime()
-    - Write test cases for computeDowntime() to make sure it is working as expected.
-    - Holidays? 
+    - Identify those tickets which most severely impact auto-readiness, i.e. has the greatest downtime (could be as simple as finding top 5 elems in sorted list)
+    - What about if/when a vehicle is non-auto ready for the WHOLE quarter and never changed in the ticket?
+    - Add a function checkAutoReadiness() that clearly applies auto readiness condition logic so this program can be easily changed for changing definition in future. Currently all of that logic is in computeDowntime
     - Handle cases where Vehicle State Impact includes 'N/A'. This is the default option for fix on site. Maybe just make this a required field in Jira? Ask Graham.
     - 'Auto readiness' definition will differ slightly be site. Account for this! See point 3. 
     - Add a downtime visualizer? Might be nice. 
-    - Clean up. Good lord.
 """
 # ./bin/python3.8
 
@@ -51,10 +48,15 @@ def computeTotalTime() -> int:
 Given two pandas datetime objects with timestamps in the form ('YYYY-MM-DD HH:MM:SS.XXXXXX'), compute the downtime. Downtime only accrues for business days within the range defined by the bounds [start, end]. The start and end timestamps are generated from Jira ticket update and creation timestamps, so it must be checked that these times fall within normal site operating hours (since we only want to accrue downtime while the site is open for business), and if not, adjust them for the final computation. The sum deltaT is the accrued downtime, which is stored in a pandas Timedelta object, and is what this function returns.
 
 The order of operations here are: 
-1. find the time delta in business days and convert to seconds, then add to sum deltaT 
-2. With the scope of the problem now reduced to difference in time during day, enforce condition that we are only accounting for open operating times
-3. Finally, compute the timedelta based on whether we needed to adjust the interval or not. 
+1. Coerce given start and end datetimes to fall within the [site open hours, site closed hours] interval as needed
+2. Compute difference between end and start times in seconds
+3. Based on whether the end day time (only considering seconds in day) is greater than the start
 
+INPUT: 
+- start, the opening bound of the down time interval passed to this function. pd.Timestamp
+- end, the closing bound of the down time interval passed to this function. pd.Timestamp
+OUTPUT:
+- directly returns a pd.Timedelta object, in seconds
 """
 def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
     SITE_DAILY_OPERATING_SECONDS = (config.close - config.open) * 3600
@@ -69,9 +71,12 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
     if end.hour  < config.open:
         end = end.replace(hour = 20, minute = 0, second = 0) - Timedelta(days=1)
 
+    # compute difference in business days between bounds and convert to seconds
+    diff = len(bdate_range(start, end, inclusive='neither')) * SITE_DAILY_OPERATING_SECONDS
+
+    # compute difference in seconds (assuming same day bounds)
     endTimeInSeconds = end.hour * 3600 + end.minute*60 + end.second
     startTimeInSeconds = start.hour * 3600 + start.minute*60 + start.second
-    diff = len(bdate_range(start, end, inclusive='neither')) * SITE_DAILY_OPERATING_SECONDS
 
     # if the end time is greater than the start time, just subtract them
     if endTimeInSeconds > startTimeInSeconds:
@@ -82,14 +87,13 @@ def computeTimeDelta(start: Timestamp, end: Timestamp) -> Timedelta:
         diff += (abs(end.replace(day = start.day, hour = config.close, minute = 0, second = 0) - start) + abs((end.replace(day = end.day, hour = config.open, minute = 0, second = 0) - end))).total_seconds()
         return Timedelta(diff, unit='seconds')
 
-
 """
-Given a date as a string in the form 'YYYY-MM-DD', or a string in the date time format used by Jira (e.g. '2022-01-14T13:25:07.139-0500'), convert the string to a pandas datetime object and strip any possible timezone information. If needed is, coerce downtime interval start and end datetime bounds to conform to the period of time we are interested in. 
+Given a date as a string in the form 'YYYY-MM-DD', or a string in the date time format used by Jira (e.g. '2022-01-14T13:25:07.139-0500'), convert the string to a pandas datetime object and strip any possible timezone information, as we are interested in absolute time differences only. If needed, coerce downtime interval start and end datetime bounds to conform to the period of time we are interested in. 
 
 e.g, if we are looking at the first quarter of the year, and downtime accrued prior to and through the new year, we would not want to count the downtime prior to the new year, only the time from the interval [YYYY-01-01 00:00:00, time vehicle was fixed]. 
 
 INPUT: A pandas timestamp object, and a string passed to the function that indicates if the datetime is the 'open' (start) or 'close' (end) of an interval.
-OUTPUT: a pandas datetime object 
+OUTPUT: a pandas timestamp object 
 """
 def createDatetimeObject(date: str, bound: str) -> Timestamp:
     datetime = to_datetime(date).tz_localize(None)
@@ -111,16 +115,20 @@ def createDatetimeObject(date: str, bound: str) -> Timestamp:
     return datetime
 
 """
+This function requires that all relevant json data have been collected using the Jira REST API. This data is provided to it through the relatedIssues input. It parses through items (tickets) in relatedIssues and generates a list (downtimeIntervals) of datetime intervals and relevant vehicle name. It works primarily by inspecting the 'history' tab of each Jira issue for a change in the 'Vehicle State Impact' field. It also checks for tickets that were created in a non-auto ready state and were eventually updated to an auto ready state, within the quarter of interest.
+
 INPUT: 
-    - relatedIssues: A list of jira ticket objects
-    - jira: a jira server instance
-    - dateTimeRange: two element list containing pandas datetime objects - the closed interval for the date range of interest
+    - relatedIssues: A list of jira ticket objects (jira.client.ResultList), converted from raw json to a class by the Jira module
+    - jira: a jira server instance (jira.client.JIRA)
+    - dateTimeRange: two element list containing pandas datetime objects - the closed interval for the date range of interest 
 OUTPUT:
-    - A three element list containing an interval, and the related vehicle name e.g. [initialDatetime, finalDatetime, vehicle]. initialDatetime, finalDatetime are themselves pandas datetime objects, and vehicle is a string. These intervals are filtered out from the list of Jira tickets for the given dateTimeRange. The interval itself indicates the time period where the vehicle was NOT auto ready. 
+    - A three element list containing an interval, and the related vehicle name e.g. [initialDatetime (pd.Timestamp), finalDatetime (pd.Timestamp), vehicle (str)]. These intervals are filtered out from the list of Jira tickets for the given dateTimeRange. The interval itself indicates the time range where the vehicle was NOT auto ready, but does not include any information as to the specific state of the vehicle (manual only or grounded), as these are not needed in the scope of this program's objective.
+
+TODO: Check for tickets that were created with vehicle in non-auto ready state, vehicle impact never changed, and then closed in non-auto ready state (presumably, the vehicle was fixed but the ticket not updated)
 """
 def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: list) -> list:
     startDatetime, endDatetime = dateTimeRange[0], dateTimeRange[1]
-    fleetIntervals = []
+    downtimeIntervals = []
 
     for issue in relatedIssues:
 
@@ -145,7 +153,7 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
                     if initialDate < startDatetime:
                         initialDate = startDatetime
     
-                    fleetIntervals.append([initialDate, changeDate, vehicle])
+                    downtimeIntervals.append([initialDate, changeDate, vehicle])
                     print(issue.key, "\t", vehicle, "\t", initialDate, "\t", changeDate)
                     continue
 
@@ -156,7 +164,7 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
                 
                 # mark the transition from non-auto ready to auto-ready, compute instance downtime and add to total downtime
                 if (vehicleImpact.toString == 'Monitor'):
-                    fleetIntervals.append([downDate, changeDate, vehicle])
+                    downtimeIntervals.append([downDate, changeDate, vehicle])
                     print(issue.key, "\t", vehicle, "\t", downDate, "\t", changeDate)
 
         # at this point we have checked the whole history of a particular vehicle for a change in state. Now check if car was created and closed in non-auto ready state, and if so, add to fleetInterval
@@ -164,28 +172,33 @@ def generateDowntimeIntervals(relatedIssues: list, jira: JIRA, dateTimeRange: li
         if vehicleImpact in config.nonAutoStates:
             upDate = createDatetimeObject(changelog[-1].created, 'end')
             downDate = createDatetimeObject(changelog[0].created, 'start')
-            fleetIntervals.append([downDate, upDate, vehicle])
+            downtimeIntervals.append([downDate, upDate, vehicle])
             print(issue.key, "\t", vehicle, "\t", downDate, "\t", upDate)
 
-    return fleetIntervals
+    return downtimeIntervals
 
 """
-Given a list of intervals and the associated vehicle name, compute in seconds the amount of overlap between intervals for two or more lexus vehicles, and the amount of time in the interval if is the WAMs. Each interval is a three-elem list in the form [initialDatetime, finalDatetime, vehicleName] where each datetime is a numpy datetime object). Return the total downtime in seconds as an integer, as accessed from the datetime.seconds attribute.
+Computes the sum of accrued downtimes as provided in the list intervals.
+
+INPUT: A list of lists, where each elem represents a specific vehicle's downtime interval, and has the form [start downtime (pd.Timestamp), end downtime (pd.Timestamp), vehicle name (str) ]
+OUTPUT: A sum of all accrued downtime over all intervals.
 
 The main logic that determines auto readiness is applied here.
+
+TODO: Add seperate functions for the WAMs and non-WAMs cases to make this function more readable.
 """
 def computeDowntime(intervals: list) -> int:
-    # no detected downtime
+
     if len(intervals) == 0:
         return Timedelta(value=0, unit='seconds').seconds
 
     intervals.sort(key = lambda x: x[0]) # sort intervals in ascending chronologically updated order, based on the start bound
-    previousEnd = intervals[0][1]
+    prevEnd = intervals[0][1]
     previousWamsEnd = Timestamp(config.quarterStart)
     previousVehicle = intervals[0][2]
     deltaWAMs = Timedelta(0, unit='seconds')
     downTime = Timedelta(value=0, unit='seconds')
-    overlappingIntervals = [] # keep track of overlapping intervals to avoid counting identical intervals
+    overlappingIntervals = []
     SECONDS_IN_DAY = 86400
 
     # check if first vehicle in list is WAMs and add downtime as needed
@@ -193,52 +206,49 @@ def computeDowntime(intervals: list) -> int:
         downTime += computeTimeDelta(intervals[0][0], intervals[0][1])
         previousWamsEnd = intervals[0][1]
 
-    # compare two adjacent intervals at a time, specifically the current intervals start point and the previous intervals end point 
-    for start, end, vehicle in intervals[1:]:
+    for currStart, currEnd, vehicle in intervals[1:]:
+
         if vehicle == config.WAMs:
             # if current WAMs downtime interval overlaps previous WAMs interval, find difference between two time deltas
-            if start <= previousWamsEnd:
-                deltaWAMs = computeTimeDelta(start, end) - deltaWAMs
+            if currStart <= previousWamsEnd:
+                deltaWAMs = computeTimeDelta(currStart, currEnd) - deltaWAMs
             # else, current WAMs interval does not overlap with previous, so just add the whole interval block to downtime
             else:
-                deltaWAMs = computeTimeDelta(start, end)
+                deltaWAMs = computeTimeDelta(currStart, currEnd)
+
             downTime += deltaWAMs
-            print(start, min(previousWamsEnd, end), deltaT, downTime, vehicle, previousVehicle)
-            previousWamsEnd = max(end, previousWamsEnd)
+            print(currStart, min(previousWamsEnd, currEnd), deltaT, downTime, vehicle, previousVehicle)
+            previousWamsEnd = max(currEnd, previousWamsEnd)
             continue
 
-        # if current interval's start value is less than previous interval's end, then intervals overlap, so downtime is accruing. Do NOT accrue downtime if the downtime interval has already been accounted for! The overlap interval is [start, min(previousEnd, end)]
-        if start < previousEnd:
-            overlap = [start, min(previousEnd, end)]
+        # if current interval's start value is less than previous interval's end, then intervals overlap, so downtime is accruing. The overlap interval is [currStart, min(prevEnd, currEnd)]
+        if currStart < prevEnd:
+            overlap = [currStart, min(prevEnd, currEnd)]
             overlappingIntervals.append(overlap)
             n = len(overlappingIntervals)
             
-            # exclude cases where both overlapping intervals are for same car, and when the interval we accrue for has matching bounds (really, no downtime accrued)
-            if vehicle != previousVehicle and start != end: 
-                # newStart is used to check if the start of the current interval in the loop is less than any previously accounted for interval end datetimes. This avoids double counting chunks of time at the start of intervals
-                newStart = start
+            # exclude cases where both overlapping intervals are for same car, and where the interval we accrue for has matching bounds (really, no downtime accrued)
+            if vehicle != previousVehicle and currStart != currEnd: 
+
+                # check that current interval start bound isn't less than any previously accounted for end bounds, then compute relevant time delta
+                newStart = currStart
                 if n < 1:
-                    newStart = max([x[1] for x in overlappingIntervals[ : n - 1]])
-                if start < newStart:
-                    deltaT = computeTimeDelta(newStart, min(previousEnd, end)) 
-                    print(newStart, min(previousEnd, end), deltaT, downTime, vehicle, previousVehicle)
+                    newStart = max([x[1] for x in overlappingIntervals[ : n - 1]])    
+                if currStart < newStart:
+                    deltaT = computeTimeDelta(newStart, min(prevEnd, currEnd)) 
+                    print(newStart, min(prevEnd, currEnd), deltaT, downTime, vehicle, previousVehicle)
                 else:
-                    deltaT = computeTimeDelta(start, min(previousEnd, end))
-                    print(start, min(previousEnd, end), deltaT, downTime, vehicle, previousVehicle)
+                    deltaT = computeTimeDelta(currStart, min(prevEnd, currEnd))
+                    print(currStart, min(prevEnd, currEnd), deltaT, downTime, vehicle, previousVehicle)
                 downTime += deltaT
                 
-
-        # now we must decide which interval to keep for comparison - we ought to keep the overlapping interval with the greater end date. assign vehicle based on this determination
-        # also update previous start -- this is to avoid double counting downtime
-        previousEnd = max(end, previousEnd)
+        # preserve interval with greater end bound
+        prevEnd = max(currEnd, prevEnd)
 
         # if the larger datetime is the same as the current interval end datetime, update previous vehicle to current vehicle
-        # TODO: consider changing var names to make things easier to read
-        if previousEnd == end:
+        if prevEnd == currEnd:
             previousVehicle = vehicle
-
         
-                
     return downTime.seconds + downTime.days * SECONDS_IN_DAY
 
 """
@@ -249,27 +259,6 @@ def computeAutoReadyPercent(downtime: int) -> int:
     return ((totalTime - downtime)/totalTime) * 100
 
 """
-"Unique" intervals are intervals with different vehicles. 
-Test computeDowntime()
-    - When we have three vehicles down - does it double count time or not? Should add 45 min. Check
-    - When we have four vehicles down - does it double count time or not? Should add 45 min. Bugged -- FIXED!
-    - When we have two vehicles down the whole duration, with intervals that exceed the date range of interest. Bugged -- FIXED!
-    - When ONLY the GEM is down for a full day, with time in off hours. Bugged -- FIXED!
-    - When downtime intervals exist for the same platform (possible with redundant/duplicate tickets).  Check
-    - When downtime exists for two vehicles, each with duplicate/redundant intervals. Check
-    - When no downtime exists. Bugged -- FIXED
-    - 
-"""
-def tests():
-    # test cases
-    computeDowntimeTestCases = [
-        [Timestamp('2021-12-31 08:00:00.000000'), Timestamp('2022-04-01 08:45:00.000000'), 'Marinara']
-        ]
-
-    # function calls
-    print(computeDowntime(computeDowntimeTestCases))
-
-"""
 At the time of writing this program, the Jira API GET methods are limited to a maximum of 100 results per call, so a workaround like this is necessary to collect all issues related to the JQL for the site in cases where the number of issues exceeds 100. 
 INPUT: a Jira server instance, defined in the main function
 OUTPUT: a list of jira issues that results from a JQL search defined by config.query
@@ -278,7 +267,6 @@ def getRelatedIssues(jira: JIRA) -> list:
     numResults = 100
     relatedIssues = jira.search_issues(jql_str=config.query, maxResults = numResults, startAt = 0)
     idx = numResults
-
     
     # TODO: Maybe only collect fields that are pertinent to the work done by this program
     while True:
@@ -290,52 +278,18 @@ def getRelatedIssues(jira: JIRA) -> list:
     
     return relatedIssues
 
-# This is just here to speed up debugging. This is the output for ARB.
+""" This is just here to speed up debugging. 
+TODO: Remove when confident program is functioning correctly.
+"""
 def REMOVE_ME():
     return [
-        [Timestamp('2022-03-04 09:45:55.633000'), Timestamp('2022-03-09 07:16:33.079000'), 'Momo'] ,
-        [Timestamp('2022-03-04 09:36:08.792000'), Timestamp('2022-03-08 07:36:42.636000'), 'Mukti'] ,
-        [Timestamp('2022-03-01 09:55:17.307000'), Timestamp('2022-03-02 09:24:56.584000'), 'Mayble'] ,
-        [Timestamp('2022-02-28 08:04:51.299000'), Timestamp('2022-03-02 08:47:37.482000'), 'Mukti'] ,
-        [Timestamp('2022-02-23 13:42:33.825000'), Timestamp('2022-02-23 13:42:36.632000'), 'Mukti'] ,
-        [Timestamp('2022-02-21 08:43:42.890000'), Timestamp('2022-02-22 15:13:38.567000'), 'Momo'] ,
-        [Timestamp('2022-02-18 08:18:20.358000'), Timestamp('2022-02-18 08:44:09.452000'), 'Mitzi'] ,
-        [Timestamp('2022-02-11 18:36:42.894000'), Timestamp('2022-02-11 18:39:15.593000'), 'Momo'] ,
-        [Timestamp('2022-02-12 11:50:55.447000'), Timestamp('2022-02-12 11:51:00.604000'), 'Momo'] ,
-        [Timestamp('2022-02-12 10:45:30.426000'), Timestamp('2022-02-12 10:45:40.793000'), 'Momo'] ,
-        [Timestamp('2022-02-09 10:58:39.654000'), Timestamp('2022-02-09 13:37:28.092000'), 'Mukti'] ,
-        [Timestamp('2022-02-16 10:13:10.291000'), Timestamp('2022-02-16 10:13:11.424000'), 'Momo'] ,
-        [Timestamp('2022-02-04 11:28:12.275000'), Timestamp('2022-02-09 17:47:20.283000'), 'Momo'] ,
-        [Timestamp('2022-01-28 13:49:44.931000'), Timestamp('2022-01-31 09:58:03.622000'), 'Mayble'] ,
-        [Timestamp('2022-01-21 11:04:32.268000'), Timestamp('2022-01-21 11:04:35.102000'), 'Momo'] ,
-        [Timestamp('2022-01-21 13:59:41.172000'), Timestamp('2022-01-24 08:19:28.133000'), 'Momo'] ,
-        [Timestamp('2022-01-24 09:51:54.821000'), Timestamp('2022-01-25 10:07:37.318000'), 'Momo'] ,
-        [Timestamp('2022-02-07 08:33:55.161000'), Timestamp('2022-02-07 14:01:42.802000'), 'Momo'] ,
-        [Timestamp('2022-01-20 13:49:06.280000'), Timestamp('2022-02-03 14:08:47.930000'), 'Momo'] ,
-        [Timestamp('2022-01-18 14:02:59.456000'), Timestamp('2022-01-25 17:07:55.945000'), 'Momo'] ,
-        [Timestamp('2022-01-18 13:42:17.050000'), Timestamp('2022-01-19 07:03:14.678000'), 'Marinara'] ,
-        [Timestamp('2022-01-17 16:38:00.411000'), Timestamp('2022-02-07 12:37:43.135000'), 'Mitzi'] ,
-        [Timestamp('2022-01-17 14:36:08.064000'), Timestamp('2022-01-17 17:07:54.981000'), 'Momo'] ,
-        [Timestamp('2022-01-17 11:01:31.158000'), Timestamp('2022-01-17 11:01:35.034000'), 'Mayble'] ,
-        [Timestamp('2022-01-07 16:01:12.649000'), Timestamp('2022-01-11 14:32:27.955000'), 'Momo'] ,
-        [Timestamp('2022-01-05 13:18:04.651000'), Timestamp('2022-01-06 08:28:30.553000'), 'Mukti'] ,
-        [Timestamp('2022-01-04 11:20:15.492000'), Timestamp('2022-01-06 11:10:21.366000'), 'Momo'] ,
-        [Timestamp('2022-01-11 08:38:35.534000'), Timestamp('2022-01-13 15:52:35.505000'), 'Mayble'] ,
-        [Timestamp('2022-01-04 07:35:44.991000'), Timestamp('2022-01-07 07:36:29.269000'), 'Makeba'] ,
-        [Timestamp('2022-01-03 11:52:07.381000'), Timestamp('2022-01-03 14:52:04.727000'), 'Mayble'] ,
-        [Timestamp('2022-01-01 00:00:00'), Timestamp('2022-01-07 12:13:30.680000'), 'Momo'] ,
-        [Timestamp('2022-01-01 00:00:00'), Timestamp('2022-01-03 16:31:21.708000'), 'Mayble'] ,
-        [Timestamp('2022-02-16 08:47:54.104000'), Timestamp('2022-02-16 08:47:55.895000'), 'Momo'] ,
-        [Timestamp('2022-01-12 14:30:26.175000'), Timestamp('2022-01-13 09:16:28.276000'), 'Mitzi']
     ]
 
 def main():
-    # tests()
-    # dateTimeRange =  [to_datetime(config.quarterStart).tz_localize(None), to_datetime(config.quarterEnd).tz_localize(None)]
-    # jira = createServerInstance()
-    # relatedIssues = getRelatedIssues(jira)
-    # intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
-    intervals = REMOVE_ME()
+    dateTimeRange =  [to_datetime(config.quarterStart).tz_localize(None), to_datetime(config.quarterEnd).tz_localize(None)]
+    jira = createServerInstance()
+    relatedIssues = getRelatedIssues(jira)
+    intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
     downtime = computeDowntime(intervals)
     autoReadyPercent = computeAutoReadyPercent(downtime)
     print("Auto readiness is {0}".format(autoReadyPercent))
