@@ -15,7 +15,6 @@ TODO:
     - 'Auto readiness' definition will differ slightly be site. Account for this! See point 3. 
     - Add a downtime visualizer? Might be nice. 
     - Add relevant downtime tickets to a dataframe, and allow user to have option to output content to a csv or similar
-    - Add support to run directly from linux cli
     - Make terminal output less poopy
 """
 
@@ -271,6 +270,7 @@ OUTPUT: a list of jira issues that results from a JQL search defined by config.q
 def getRelatedIssues(jira: JIRA) -> list:
     numResults = 100
     relatedIssues = jira.search_issues(jql_str=config.query, maxResults = numResults, startAt = 0)
+    assert len(relatedIssues) > 0, "API did not return any Jira issues for JQL {0}".format(config.query)
     idx = numResults
 
     print("Fetching relevant JIRA tickets for site {0}".format(config.site))
