@@ -46,3 +46,6 @@ pip install -r requirements.txt
 
 Run using the python3.8 interpeter in ./bin/
 
+Make sure main.py is executable by running sudo chmod +x main.py
+
+
