@@ -330,5 +330,5 @@ def main():
     print("Auto readiness is {0}".format(autoReadyPercent))
     print('End program')
     
-if __name__ == '__main__':
+if __name__ == '__jira-tracker__':
     main()
