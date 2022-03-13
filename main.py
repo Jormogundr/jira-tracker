@@ -11,12 +11,10 @@ TODO:
     - Handle cases where the ticket is opened in non-auto state and does NOT change state before being closed!
     - Identify those tickets which most severely impact auto-readiness, i.e. has the greatest downtime (could be as simple as finding top 5 elems in sorted list)
     - Add a function checkAutoReadiness() that clearly applies auto readiness condition logic so this program can be easily changed for changing definition in future. Currently all of that logic is in computeDowntime
-    - Handle cases where Vehicle State Impact includes 'N/A'. This is the default option for fix on site. Maybe just make this a required field in Jira? Ask Graham.
     - 'Auto readiness' definition will differ slightly be site. Account for this! See point 3. 
     - Add a downtime visualizer? Might be nice. 
     - Add relevant downtime tickets to a dataframe, and allow user to have option to output content to a csv or similar
     - Make terminal output look nicer
-    - Add ticket numbers to ignore -- such as when a vehicle is involved in a collision and taken out of service but is grounded in Jira
 """
 
 from jira import JIRA
