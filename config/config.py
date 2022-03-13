@@ -3,9 +3,10 @@ quarterStart = '2022-01-01'
 quarterEnd = '2022-04-01'
 
 # Site specific settings
-WAMs = 'McHale'
-site = 'Arlington Fleet'
-fleet = ['Molly', 'Mojo', 'Marty', 'Morocca']
+WAMs = 'Mooi'
+site = 'INF'
+fleet = ['Mandu', 'Marbles', 'Mvemjsunp', 'Mario']
+issues_to_exclude = "INF-1372" # should be single string with issue id's separated by commas e.g. "INF-1381, INF-1380" for tickets to exclude from consideration, otherwise should be empty quotes ""
 
 open = 8 # site opening time (int)
 close = 20 # site closing time (int)
@@ -15,4 +16,4 @@ holidays = [] # each elem should be in form "YYYY, MM, DD", e.g. ["2022, 5, 30",
 nonAutoStates = ['Grounded', 'Manual Only']
 
 # Do not touch
-query = 'project IN ("{0}") AND updatedDate >= "{1}" AND updatedDate <= "{2}" AND statusCategory in ("New", "In Progress", "Complete") AND type IN ("Fix On Site","Preventative Maintenance","Support Request") ORDER BY created DESC'.format(site, quarterStart, quarterEnd)
+query = 'project IN ("{0}") AND updatedDate >= "{1}" AND updatedDate <= "{2}" AND statusCategory in ("New", "In Progress", "Complete") AND type IN ("Fix On Site","Preventative Maintenance","Support Request") AND id NOT IN ({3}) ORDER BY created DESC'.format(site, quarterStart, quarterEnd, issues_to_exclude)
