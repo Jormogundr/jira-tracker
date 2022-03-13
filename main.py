@@ -28,7 +28,7 @@ import config.config as config
 import config.jiraConfig as jiraConfig
 
 """
-Checks for required command line input. Returns an argparse Namespace object with relevant information. 
+Checks for required command line input. Doesn't return anything - instead, defines the args as a global namespace. 
 """
 def parseArgs():
     parser = argparse.ArgumentParser(description='This program uses the Jira API to calculate the total autonomy availability uptime for the Ann Arbor May fleet.')
@@ -41,7 +41,6 @@ def parseArgs():
     
     global args
     args = parser.parse_args()
-    return 
 
 """
 Returns a Jira class generated from the jira config info.
@@ -299,7 +298,10 @@ def getRelatedIssues(jira: JIRA) -> list:
         else:
             return relatedIssues
 
-def buildJQL():
+"""
+Uses the arguments provided to build the JQL query used by the Jira GET API method. Returns the query.
+"""
+def buildJQL() -> str:
     assert args.site in config.mayFleet.keys(), "The site name must match one of the keys in the mayFleet hashmap"
     startQuarter, endQuarter = config.getQuarter(args.quarter)
 
@@ -312,10 +314,12 @@ def buildJQL():
     query = 'project IN ("{0}") AND updatedDate >= "{1}" AND updatedDate <= "{2}" AND statusCategory in ("New", "In Progress", "Complete") AND type IN ("Fix On Site","Preventative Maintenance","Support Request") {3} ORDER BY created DESC'.format(args.site, startQuarter, endQuarter, issuesToExclude)
     return query
 
-def dateTimeRange():
+"""
+Returns the start of the quarter datetime and end of quarter datetime as pandas Timestamp objects.
+"""
+def dateTimeRange() -> Timestamp:
     startQuarter, endQuarter = config.getQuarter(args.quarter)
     return [to_datetime(startQuarter).tz_localize(None), to_datetime(endQuarter).tz_localize(None)]
-
 
 def main():
     parseArgs()
