@@ -1,3 +1,4 @@
+#! /usr/bin/python3
 """
 
 This program uses the Jira API to calculate the total autonomy availability uptime for the Ann Arbor May fleet. 
@@ -17,7 +18,6 @@ TODO:
     - Add support to run directly from linux cli
     - Make terminal output less poopy
 """
-# ./bin/python3.8
 
 from jira import JIRA
 from pandas import Timedelta, to_datetime, bdate_range, Timestamp
