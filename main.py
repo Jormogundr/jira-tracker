@@ -15,15 +15,33 @@ TODO:
     - 'Auto readiness' definition will differ slightly be site. Account for this! See point 3. 
     - Add a downtime visualizer? Might be nice. 
     - Add relevant downtime tickets to a dataframe, and allow user to have option to output content to a csv or similar
-    - Make terminal output less poopy
+    - Make terminal output look nicer
+    - Add ticket numbers to ignore -- such as when a vehicle is involved in a collision and taken out of service but is grounded in Jira
 """
 
 from jira import JIRA
 from pandas import Timedelta, to_datetime, bdate_range, Timestamp
-from numpy import busday_count
+from numpy import argsort, busday_count
+import argparse
 
 import config.config as config
 import config.jiraConfig as jiraConfig
+
+"""
+Checks for required command line input. Returns an argparse Namespace object with relevant information. 
+"""
+def parseArgs():
+    parser = argparse.ArgumentParser(description='This program uses the Jira API to calculate the total autonomy availability uptime for the Ann Arbor May fleet.')
+    parser.add_argument('-s', '--site', type = str, required=True,
+                        help='Site name.', choices=["AA", "INF", "ARL","HHF", "GRF"])
+    parser.add_argument('-q', '--quarter', type = int, required=True,
+                        help='Quarter of the year', choices=[1,2,3,4])
+    parser.add_argument('-e', '--exclude', type = str, default="",
+                        help='Jira ticket IDs to exclude. Must be a single string where keys are comma delineated, e.g. "INF-1380, INF-1381"')
+    
+    global args
+    args = parser.parse_args()
+    return 
 
 """
 Returns a Jira class generated from the jira config info.
@@ -37,8 +55,7 @@ def createServerInstance() -> JIRA:
 Given the date range of interest, compute and return total time in seconds that the site is open (service hours). Return type is int.
 """
 def computeTotalTime() -> int:
-    start = config.quarterStart
-    end = config.quarterEnd
+    start, end = config.getQuarter(args.quarter)
     # TODO: Why not use bdate_range() to avoid redundant imports?
     NUM_WEEKDAYS = busday_count(start, end)
     SECONDS_IN_BUSINESS_DAY = (config.close - config.open) * 3600
@@ -97,8 +114,9 @@ OUTPUT: a pandas timestamp object
 """
 def createDatetimeObject(date: str, bound: str) -> Timestamp:
     datetime = to_datetime(date).tz_localize(None)
-    open = to_datetime(config.quarterStart).tz_localize(None)
-    close = to_datetime(config.quarterEnd).tz_localize(None)
+    startQuarter, endQuarter = config.getQuarter(args.quarter)
+    open = to_datetime(startQuarter).tz_localize(None)
+    close = to_datetime(endQuarter).tz_localize(None)
 
     # check for invalid datetimes, i.e. when a ticket is closed prior to period of interest but gets 'updated' with a comment WITHIN the period of interest
     # returning either bound of the period of interest should result in identical intervals i.e. [start, start] so no downtime would accrue for these tickets
@@ -190,29 +208,29 @@ The main logic that determines auto readiness is applied here.
 TODO: Add seperate functions for the WAMs and non-WAMs cases to make this function more readable.
 """
 def computeDowntime(intervals: list) -> int:
-
     if len(intervals) == 0:
         return Timedelta(value=0, unit='seconds').seconds
 
     intervals.sort(key = lambda x: x[0]) # sort intervals in ascending chronologically updated order, based on the start bound
     prevEnd = intervals[0][1]
-    previousWamsEnd = Timestamp(config.quarterStart)
+    previousWamsEnd = Timestamp(config.getQuarter(args.quarter)[0])
     previousVehicle = intervals[0][2]
     deltaWAMs = Timedelta(0, unit='seconds')
     downTime = Timedelta(value=0, unit='seconds')
     overlappingIntervals = []
+    WAMs = config.mayFleet[args.site][-1]
     SECONDS_IN_DAY = 86400
 
     print("Computing site auto readiness...")
 
     # check if first vehicle in list is WAMs and add downtime as needed
-    if intervals[0][2] == config.WAMs:
+    if intervals[0][2] == WAMs:
         downTime += computeTimeDelta(intervals[0][0], intervals[0][1])
         previousWamsEnd = intervals[0][1]
 
     for currStart, currEnd, vehicle in intervals[1:]:
 
-        if vehicle == config.WAMs:
+        if vehicle == WAMs:
             # if current WAMs downtime interval overlaps previous WAMs interval, find difference between two time deltas
             if currStart <= previousWamsEnd:
                 deltaWAMs = computeTimeDelta(currStart, currEnd) - deltaWAMs
@@ -221,7 +239,7 @@ def computeDowntime(intervals: list) -> int:
                 deltaWAMs = computeTimeDelta(currStart, currEnd)
 
             downTime += deltaWAMs
-            print(currStart, min(previousWamsEnd, currEnd), deltaT, downTime, vehicle, previousVehicle)
+            print(f"Start: {currStart} End: {min(previousWamsEnd, currEnd)} Delta: {deltaT} Downtime: {downTime} Vehicle: {vehicle} Previous Vehicle: {previousVehicle})")
             previousWamsEnd = max(currEnd, previousWamsEnd)
             continue
 
@@ -240,10 +258,10 @@ def computeDowntime(intervals: list) -> int:
                     newStart = max([x[1] for x in overlappingIntervals[ : n - 1]])    
                 if currStart < newStart:
                     deltaT = computeTimeDelta(newStart, min(prevEnd, currEnd)) 
-                    print(newStart, min(prevEnd, currEnd), deltaT, downTime, vehicle, previousVehicle)
+                    print(f"Start: {newStart} End: {min(previousWamsEnd, currEnd)} Delta: {deltaT} Downtime: {downTime} Vehicle: {vehicle} Previous Vehicle: {previousVehicle})")
                 else:
                     deltaT = computeTimeDelta(currStart, min(prevEnd, currEnd))
-                    print(currStart, min(prevEnd, currEnd), deltaT, downTime, vehicle, previousVehicle)
+                    print(f"Start: {currStart} End: {min(previousWamsEnd, currEnd)} Delta: {deltaT} Downtime: {downTime} Vehicle: {vehicle} Previous Vehicle: {previousVehicle})")
                 downTime += deltaT
                 
         # preserve interval with greater end bound
@@ -265,33 +283,50 @@ def computeAutoReadyPercent(downtime: int) -> int:
 """
 At the time of writing this program, the Jira API GET methods are limited to a maximum of 100 results per call, so a workaround like this is necessary to collect all issues related to the JQL for the site in cases where the number of issues exceeds 100. 
 INPUT: a Jira server instance, defined in the main function
-OUTPUT: a list of jira issues that results from a JQL search defined by config.query
+OUTPUT: a list of jira issues that results from a JQL search defined by buildJQL()
 """
 def getRelatedIssues(jira: JIRA) -> list:
     numResults = 100
-    relatedIssues = jira.search_issues(jql_str=config.query, maxResults = numResults, startAt = 0)
-    assert len(relatedIssues) > 0, "API did not return any Jira issues for JQL {0}".format(config.query)
+    relatedIssues = jira.search_issues(jql_str=buildJQL(), maxResults = numResults, startAt = 0)
+    assert len(relatedIssues) > 0, "API did not return any Jira issues for JQL {0}".format(buildJQL())
     idx = numResults
-
-    print("Fetching relevant JIRA tickets for site {0}".format(config.site))
+    print("Fetching relevant JIRA tickets for site {0}".format(args.site))
     
     while True:
         if len(relatedIssues) % numResults == 0:
-            issues = jira.search_issues(jql_str=config.query, maxResults = numResults, startAt = idx)
-            relatedIssues += issues
+            relatedIssues += jira.search_issues(jql_str=buildJQL(), maxResults = numResults, startAt = idx)
             idx += numResults
-        if not issues:
+        else:
             return relatedIssues
 
+def buildJQL():
+    assert args.site in config.mayFleet.keys(), "The site name must match one of the keys in the mayFleet hashmap"
+    startQuarter, endQuarter = config.getQuarter(args.quarter)
+
+    # check if jira issues to exclude were provided as arguments
+    if not args.exclude:
+        issuesToExclude = ""
+    else:
+        issuesToExclude = "AND id NOT IN ({0})".format(args.exclude)
+    
+    query = 'project IN ("{0}") AND updatedDate >= "{1}" AND updatedDate <= "{2}" AND statusCategory in ("New", "In Progress", "Complete") AND type IN ("Fix On Site","Preventative Maintenance","Support Request") {3} ORDER BY created DESC'.format(args.site, startQuarter, endQuarter, issuesToExclude)
+    return query
+
+def dateTimeRange():
+    startQuarter, endQuarter = config.getQuarter(args.quarter)
+    return [to_datetime(startQuarter).tz_localize(None), to_datetime(endQuarter).tz_localize(None)]
+
+
 def main():
-    dateTimeRange =  [to_datetime(config.quarterStart).tz_localize(None), to_datetime(config.quarterEnd).tz_localize(None)]
+    parseArgs()
+    dateRange = dateTimeRange()
     jira = createServerInstance()
     relatedIssues = getRelatedIssues(jira)
-    intervals = generateDowntimeIntervals(relatedIssues, jira, dateTimeRange)
+    intervals = generateDowntimeIntervals(relatedIssues, jira, dateRange)
     downtime = computeDowntime(intervals)
     autoReadyPercent = computeAutoReadyPercent(downtime)
     print("Auto readiness is {0}".format(autoReadyPercent))
+    print('End program')
     
 if __name__ == '__main__':
     main()
-    print('End program')

@@ -1,19 +1,36 @@
-# Define the period of interest
-quarterStart = '2022-01-01'
-quarterEnd = '2022-04-01'
-
-# Site specific settings
-WAMs = 'Mooi'
-site = 'INF'
-fleet = ['Mandu', 'Marbles', 'Mvemjsunp', 'Mario']
-issues_to_exclude = "INF-1372" # should be single string with issue id's separated by commas e.g. "INF-1381, INF-1380" for tickets to exclude from consideration, otherwise should be empty quotes ""
+from datetime import date
 
 open = 8 # site opening time (int)
 close = 20 # site closing time (int)
-
-# Other configs
 holidays = [] # each elem should be in form "YYYY, MM, DD", e.g. ["2022, 5, 30", "2022, 6, 20", "2022, 7, 4"]
 nonAutoStates = ['Grounded', 'Manual Only']
 
-# Do not touch
-query = 'project IN ("{0}") AND updatedDate >= "{1}" AND updatedDate <= "{2}" AND statusCategory in ("New", "In Progress", "Complete") AND type IN ("Fix On Site","Preventative Maintenance","Support Request") AND id NOT IN ({3}) ORDER BY created DESC'.format(site, quarterStart, quarterEnd, issues_to_exclude)
+###########################################################################################################################################################
+###################         Nothing below should need to be changed. Exceptions might include something like site fleet changes         ###################
+###########################################################################################################################################################
+
+"""
+The WAMs vehicle must be the last item in each list!
+"""
+mayFleet = {
+    "INF": ['Mandu', 'Marbles', 'Mvemjsunp', 'Mario', 'Mooi'], 
+    "AA": ['Momo', 'Mitzi', 'Makeba', 'Marinara', 'Mayble', 'Mukti'],
+    "ARL": ['Mojo', 'Morocca', 'Molly', 'Marty','McHale'],
+    "GRF": ['Minerva', 'Meow', 'Michigan', 'Murphy'],
+    "HHF": ['Maria', 'Myla', 'Mimi']
+    }
+
+"""
+Given a quarter of the year [1,2,3,4], return the start and end of the quarter in dates as strings, in the form YYYY-MM-DD
+"""
+def getQuarter(quarter):
+    currentYear = date.today().year
+    quarters = {
+    1: [f"{currentYear}-01-01", f"{currentYear}-04-01"],
+    2: [f"{currentYear}-04-01", f"{currentYear}-07-01"],
+    3: [f"{currentYear}-07-01", f"{currentYear}-10-01"],
+    4: [f"{currentYear}-10-01", f"{currentYear + 1}-01-01"]
+    }   
+    return quarters[quarter][0], quarters[quarter][1]
+
+
