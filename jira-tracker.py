@@ -1,4 +1,4 @@
-#! /usr/bin/python3
+#! /bin/python3.8
 """
 
 This program uses the Jira API to calculate the total autonomy availability uptime for the Ann Arbor May fleet. 
@@ -19,7 +19,7 @@ TODO:
 
 from jira import JIRA
 from pandas import Timedelta, to_datetime, bdate_range, Timestamp
-from numpy import argsort, busday_count
+from numpy import busday_count
 import argparse
 
 import config.config as config
@@ -30,12 +30,15 @@ Checks for required command line input. Doesn't return anything - instead, defin
 """
 def parseArgs():
     parser = argparse.ArgumentParser(description='This program uses the Jira API to calculate the total autonomy availability uptime for the Ann Arbor May fleet.')
-    parser.add_argument('-s', '--site', type = str, required=True,
-                        help='Site name.', choices=["AA", "INF", "ARL","HHF", "GRF"])
-    parser.add_argument('-q', '--quarter', type = int, required=True,
-                        help='Quarter of the year', choices=[1,2,3,4])
     parser.add_argument('-e', '--exclude', type = str, default="",
                         help='Jira ticket IDs to exclude. Must be a single string where keys are comma delineated, e.g. "INF-1380, INF-1381"')
+
+    # create separate group for required args to fix --help optional/required output
+    requiredNamed = parser.add_argument_group('required named arguments')
+    requiredNamed.add_argument('-s', '--site', type = str, required=True,
+                        help='Site name.', choices=["AA", "INF", "ARL","HHF", "GRF"])
+    requiredNamed.add_argument('-q', '--quarter', type = int, required=True,
+                        help='Quarter of the year', choices=[1,2,3,4])
     
     global args
     args = parser.parse_args()
